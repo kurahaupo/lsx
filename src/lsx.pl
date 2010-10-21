@@ -4,6 +4,7 @@ use 5.006;
 use warnings;
 use strict;
 
+use Carp 'croak';
 use POSIX 'strftime', 'S_ISDIR';
 use Getopt::Long;
 use Fcntl ':mode';
@@ -11,7 +12,7 @@ use Fcntl ':mode';
 my (    $all, $almost_all,
         $long_mode, $hide_owner, $hide_group,
         $with_flag, $in_columns,
-        $use_colour, $colour_map, $colour_kinds, $colour_match,
+        $use_colour, $colour_map,
         $sorter_needs_stat,
         $sort_by, $reverse,
         $dont_expand, $find_mode, $recurse, $show_symlink,
@@ -27,7 +28,10 @@ my (    $all, $almost_all,
         $human_readable,
         $use_utc,
         $max_prec,
+        $trace_symlink_paths,
+        $dereference,
     );
+my $link_loop_limit = 32;
 
 $colour_map ||= do { my $e = $ENV{LS_COLORS}; $e ? [ split /:/, $e ] : () }
              || [ qw{
@@ -40,7 +44,7 @@ $colour_map ||= do { my $e = $ENV{LS_COLORS}; $e ? [ split /:/, $e ] : () }
                    *.tif=01;35 *.png=01;35 *.mpg=01;35 *.avi=01;35 *.fli=01;35
                    *.gl=01;35 *.dl=01;35
                  }];
-$use_colour = 'never';
+$use_colour = 'auto';
 $max_prec = 1;
 
 my $block_size = $ENV{POSIXLY_CORRECT} ? 512 : 1024;
@@ -136,25 +140,25 @@ sub human_format($$) {
 
 # smode & 0170000 => (smode >> 12 & 0x0f) =>
 #   000: deleted
-#   001: IFIFO   
-#   002: IFCHR   
+#   001: IFIFO
+#   002: IFCHR
 #   003:
-#   004: IFDIR   
+#   004: IFDIR
 #   005:
-#   006: IFBLK   
+#   006: IFBLK
 #   007:
-#   010: IFREG   
+#   010: IFREG
 #   011:
-#   012: IFLNK   
+#   012: IFLNK
 #   013:
-#   014: IFSOCK 
+#   014: IFSOCK
 #   015:
 #   016:
 #   017:
 # LS_COLORS='no=00:fi=00:di=01;34:ln=01;36:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:ex=01;32'
 #
 my @mchar = qw( ? p c ? d X b ? - ? l ? S ? ? ? );
-my @mkind = qw( 0 pi cd 0 di X bd 0 no 0 ln 0 so 0 0 0 );
+my @mkind = qw( 0 pi cd 0 di X bd 0 no 0 ln 0 so 0 0 0 or );
 my @xchar = qw( 0 0 0 0 / 0 0 0 0 0 @ 0 = 0 0 0 );
 my @zchar = qw( x t s ? s ? ? ? );
 my @Zchar = qw( - T l ? S ? ? ? );
@@ -175,6 +179,9 @@ sub file_match($$) {
     return $name =~ $shell_pattern;
 }
 
+{
+my $colour_kinds;
+my $colour_match;
 sub colourize($$) {
     my ( $name, $mode ) = @_;
     if ( ! $colour_kinds && ! $colour_match ) {
@@ -196,7 +203,7 @@ sub colourize($$) {
                 last MATCH;
             }
         }
-        if ( my $cxx = $mkind[ $mode >> 12 ] ) {
+        if ( my $cxx = $mkind[ $mode >> 12 || 16 ] ) {
             $cx = $colour_kinds->{$cxx};
             last MATCH;
         }
@@ -205,12 +212,64 @@ sub colourize($$) {
     $name = "\033[${cx}m$name\033[0m" if $cx;
     $name;
 }
+}
+
+sub append_path(\$$) {
+    my ($t,$x) = @_;
+    $x =~ m</> and croak "'/' not allowed";
+    return if $x eq '.';
+    if ( $x eq '..' && $$t !~ m<(?:^|/)\.\./$> ) {
+        return if $$t eq '/';
+        $$t =~ s</?[^/]+$><>;
+        return;
+    }
+    $$t .= "/" if $$t ne "" && $$t !~ m</$>;
+    $$t .= $x;
+}
+
+sub trace_symlinks($$$);
+sub trace_symlinks($$$) {
+    my ($prefix, $path, $limit) = @_;
+    $path =~ s<//+></>g;
+    #1 while $path =~ s</\./></>g;
+    #$path =~ s<^\./><>;
+    return $prefix if $path eq '';
+
+    my $result = "";
+    $path =~ s<^/><> and $result = $prefix = "/";
+
+    my @parts = split m</>, $path;
+    PARTS: while (@parts) {
+        my $part = shift @parts;
+        my $newpref = "$prefix$part";
+        $result .= $part;
+
+        while ( $part ne '.' && $part ne '..' and my $l = readlink $newpref ) {
+            $limit && --$limit or do {
+                $result .= $use_colour
+                            ? " -> ".colourize("...",0)
+                            : " -> ...";
+                last PARTS;
+            };
+            my $t = trace_symlinks($prefix, $l, $limit);
+            $result .= @parts ? "[-> $t]" : " -> $t";
+            $l =~ s<.*/><> and $prefix .= $&;
+            $part = $l;
+            $newpref = "$prefix$part";
+        }
+
+        $result .= "/" if @parts;
+        $prefix = $newpref;
+        $prefix .= "/" if @parts;
+    }
+    return $result;
+}
 
 sub format_long($) {
     my $ref = $_[0];
     my $name = $ref->{name};
     my $file = $ref->{file} ||= $name;
-    my $stat = $ref->{stat} ||= [ lstat $file ];
+    my $stat = $ref->{stat} ||= [ $dereference ? stat $file : lstat $file ];
 
     @$stat or do {
         warn "Couldn't stat $file: $!\n";
@@ -260,23 +319,24 @@ sub format_long($) {
 
         $line .= format_date $atime if $show_atime;
     }
-    my $link_ptr = "";
-    my $mode_flag = "";
 
-    if ( S_ISLNK($mode) ) {
+    my $link_ptr = "";
+
+    if ( $trace_symlink_paths ) {
+        $name = trace_symlinks "", $name, $link_loop_limit;
+    } elsif ( S_ISLNK($mode) ) {
         my $link = $ref->{link} ||= readlink( $file ) || "<can't read link>";
         $mode = (stat $file)[2];
         $link_ptr = " -> $link";
     }
 
+    my $mode_flag = "";
     $mode_flag = mode_flag $mode if $with_flag;
     $name = $file if $find_mode;
 
     my $length = length($line) + length($name) + length($link_ptr) + length($mode_flag);
 
-    if ( $use_colour ) {
-        $name = colourize $name, $mode;
-    }
+    $name = colourize $name, $mode if $use_colour;
 
     $line .= $name;
     $line .= $link_ptr;
@@ -308,7 +368,7 @@ sub format_short($) {
     my $length = length $line;
 
     if ( $with_flag || $show_blocks || $show_inum || $use_colour ) {
-        $stat = $ref->{stat} ||= [ lstat $file ];
+        $stat = $ref->{stat} ||= [ $dereference ? stat $file : lstat $file ];
 
         my ( $dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,
             $atime,$mtime,$ctime,$blksize,$blocks ) = @$stat;
@@ -478,9 +538,10 @@ GetOptions(
     'C'             => \$in_columns,
     'F'             => \$with_flag,
     'H|si'          => sub { $human_readable = 1000 },
-    'R'             => \$recurse,
-    'S'             => sub { $sort_by = $sorter{size} },
-    'U'             => \$unsorted,
+    'L|dereference' => \$dereference,
+    'R|recurse'     => \$recurse,
+    'S|sort-by-size' => sub { $sort_by = $sorter{size} },
+    'T|trace'       => \$trace_symlink_paths,
     'a'             => \$all,
     'blocksize=i'   => \$block_size,
     'colour|color:s'=> \$use_colour,
@@ -490,27 +551,28 @@ GetOptions(
     'full-time!'    => \$full_time,
     'g'             => \$hide_owner,
     'heading!'      => \$show_heading,
-    'hide-all!'     => sub { $hide_time   = $hide_group  = $hide_mode   = $hide_nlinks = $hide_owner  = $hide_owner  = $hide_size   = $hide_time   = $_[1]; $long_mode = 1; },
+    'hide-all!'     => sub { $hide_time = $hide_group = $hide_mode = $hide_nlinks = $hide_owner = $hide_owner = $hide_size = $hide_time = $_[1]; $long_mode = 1; },
+    'hide-blocks!'  => sub { $show_blocks = ! $_[1] },
     'hide-date!'    => \$hide_time,
     'hide-group!'   => \$hide_group,
-    'hide-links!'   => \$hide_nlinks,
+    'hide-inode!'   => sub { $show_inum = ! $_[1] },
     'hide-mode!'    => \$hide_mode,
     'hide-num-links!' => \$hide_nlinks,
     'hide-owner!'   => \$hide_owner,
     'hide-size!'    => \$hide_size,
     'hide-time!'    => \$hide_time,
     'h|human-readable' => sub { $human_readable = 1024 },
-    'i'             => \$show_inum,
+    'i|show-inode'  => \$show_inum,
     'l'             => \$long_mode,
     'localtime!'    => sub { $use_utc = ! $_[1] },
     'n'             => \$show_numeric,
     'o'             => \$hide_group,
     'q'             => \$show_qmark,
     'r'             => \$reverse,
-    's'             => \$show_blocks,
     'short-time!'   => sub { $full_time = ! $_[1] },
-    'show-all!'     => sub { $hide_time   = $hide_group  = $hide_mode   = $hide_nlinks = $hide_owner  = $hide_owner  = $hide_size   = $hide_time   = ! $_[1]; $long_mode = 1; },
+    'show-all!'     => sub { $hide_time = $hide_group = $hide_mode = $hide_nlinks = $hide_owner = $hide_owner = $hide_size = $hide_time = ! $_[1]; $long_mode = 1; },
     'show-atime!'   => \$show_atime,
+    's|show-blocks' => \$show_blocks,
     'show-ctime!'   => \$show_ctime,
     'show-date!'    => sub { $hide_time = ! $_[1] },
     'show-group!'   => sub { $hide_group = ! $_[1] },
@@ -523,7 +585,7 @@ GetOptions(
     'sort-by-time!' => \$sort_by_time,
     'sort-by=s'     => sub { set_sort_by $_[1] },
     't'             => \$sort_by_time,
-    'unsorted'      => \$unsorted,
+    'U|unsorted|sort-by-none' => \$unsorted,
     'utc!'          => \$use_utc,
     'u|use-atime'   => \$use_atime,
     'max-precision=i' => \&max_prec,
@@ -543,18 +605,18 @@ Options to select layout:
     -C                  multi-column
     -F                  put symbol after filename to denote type
     --colo[u]r          change colour depending on filetype
-    -l                  use classic "long-mode"
+    -l                  use classic "long mode"
+    -L --derefence      show info about what symlink point to rather than itself
+    -T --trace          show part-by-part redirection of symlinks
 
 Options to control which timestamp fields are used and/or presented
-    -c                  use ctime
-    -u                  use atime
+    -c                  show ctime rather than mtime in "long mode"
+    -u                  show atime rather than mtime in "long mode"
 
 Options to control sorting
     --sort-by {atime,ctime,file,mode,mtime,name}
-    --sort-by-time      sort_by_time
-    -t                  sort_by_time
-    -U                  unsorted
-    --unsorted          unsorted
+    -t, --sort-by-time  sort by whichever time field is displayed in long mode 
+    -U, --unsorted      display in order returned by filesystem
 
 Options to control how information is formatted
     --short-time        display time(s) as month, day, and either time-of-day
@@ -570,35 +632,29 @@ Options to include specific information:
     --show-all
     --hide-all
 
-    --show-{date,time}
-    --hide-{date,time}
     --show-atime
     --show-ctime
     --show-mtime
-    -2                  show ctime and mtime
-    -3                  show atime, ctime and mtime
+    -2                  show ctime and mtime (imples "-l")
+    -3                  show atime, ctime and mtime (imples "-l")
 
     --blocksize
     -g                  hide owner (only with "-l")
     -o                  hide group (only with "-l")
 
     --heading           show_heading
-    --hide-group        hide_group
-    --hide-links        hide_nlinks
-    --hide-mode         hide_mode
-    --hide-num-links    hide_nlinks
-    --hide-owner        hide_owner
-    --hide-size         hide_size
-    -i                  show_inum
+    --{show,hide}-{date,time}
+    --{hide,show}-group
+    --{hide,show}-inode
+    --{hide,show}-mode
+    --{hide,show}-num-links
+    --{hide,show}-owner
+    --{hide,show}-size
+    -i                  --show-inode
     -n                  show_numeric
     -q                  show_qmark
     -r                  reverse
     -s                  show_blocks
-    --show-group        hide_group
-    --show-mode         hide_mode
-    --show-num-links    hide_nlinks
-    --show-owner        hide_owner
-    --show-size         hide_size
 EOF
 
 #
