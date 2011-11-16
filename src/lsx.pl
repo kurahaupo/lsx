@@ -24,7 +24,6 @@ my (    $all, $almost_all,
         $hide_nlinks,
         $hide_size,
         $show_mtime, $show_ctime, $show_atime, $full_time,
-        $show_xattr, $show_selinux_security_context,
         $show_heading,
         $human_readable,
         $use_utc,
@@ -76,7 +75,7 @@ sub format_long_heading() {
 
     $line .= sprintf "%8s ", "blocks" if $show_blocks;
 
-    $line .= sprintf "%-10s ", "mode" unless $hide_mode;
+    $line .= sprintf "%-10s ", "perms" unless $hide_mode;
 
     $line .= sprintf "%4s ", "link" unless $hide_nlinks;
 
@@ -290,8 +289,8 @@ sub format_long($) {
                     map {
                         ( $_ & 0444 ? "r" : "-" ).
                         ( $_ & 0222 ? "w" : "-" ).
-                        (( $_ & 0111 ? $zchar[ $_ >> 9 ]
-                                     : $Zchar[ $_ >> 9 ] ) || "?" )
+                        (( $_ & 0111 ? $zchar[ $_ >> 9 & 7 ]
+                                     : $Zchar[ $_ >> 9 & 7 ] ) || "?" )
                     } $mode & 04700, $mode & 02070, $mode & 01007
         unless $hide_mode;
 
@@ -497,96 +496,62 @@ sub ls_list(@) {
 my %sorter = (
         file  => sub { $a->{file}       cmp $b->{file}       },
         name  => sub { $a->{name}       cmp $b->{name}       },
-        mode  => sub { $b->{stat}->[2]  <=> $a->{stat}->[2]  },
+        perm  => sub { $b->{stat}->[2]  <=> $a->{stat}->[2]  },
         mtime => sub { $b->{stat}->[9]  <=> $a->{stat}->[9]  },
         ctime => sub { $b->{stat}->[10] <=> $a->{stat}->[10] },
         atime => sub { $b->{stat}->[8]  <=> $a->{stat}->[8]  },
         size  => sub { $b->{stat}->[7]  <=> $a->{stat}->[7]  },
     );
-$sorter{perms} = $sorter{mode};
 
 my %sorter_needs_stat = (
         atime => 1,
         ctime => 1,
         mtime => 1,
-        mode  => 1,
-        perms => 1,
+        perm  => 1,
     );
 
 my ( $hide_time,
      $sort_by_time,
      $time_display,
-     $use_time,
+     $unsorted,
+     $use_atime,
+     $use_ctime,
      $use_double_time,
      $use_triple_time,
     );
 
 sub set_sort_by($) {
-    my $k = $_[-1];
-    if ($k eq 'none') {
-        $sort_by_time = 0;
-        $sorter_needs_stat = 0;
-        $sort_by = undef;
-    } elsif ($k eq 'time') {
-        $sort_by_time = 1;
-        $sorter_needs_stat = 0;
-        $sort_by = undef;
-    } else {
-        $sort_by_time = 0;
-        $sorter_needs_stat = $sorter_needs_stat{$k};
-        $sort_by = $sorter{$k} || die "No way to sort on '$k'\n";
-    }
+    $sorter_needs_stat = $sorter_needs_stat{$_[0]};
+    $sort_by = $sorter{$_[0]} || die "No way to sort on '$_[0]'\n";
 }
 
-# Default sorting order...
-set_sort_by 'name';
-
-sub set_show_all($$) {
-    $hide_time =
-    $hide_group =
-    $hide_mode =
-    $hide_nlinks =
-    $hide_owner =
-    $hide_owner =
-    $hide_size =
-    $hide_time = ! $_[1];
-    $show_xattr =
-    $show_selinux_security_context = $_[1];
-    $long_mode = 1;
-}
-
-sub N($) { my $r = \$_[0]; $$r && ref $$r eq 'CODE' ? sub { $_[-1] = !$_[-1]; goto &$$r } : sub { $$r = !$_[-1] } }
-sub S($$) { my $r = \$_[0]; my $v = $_[1]; sub { $$r = $v } }
 Getopt::Long::config(qw( no_ignore_case bundling require_order ));
-GetOptions
-    '1'             => S($in_columns, 0),
+GetOptions(
+    '1'             => sub { $in_columns = 0 },
     '2'             => \$use_double_time,
     '3'             => \$use_triple_time,
     'A'             => \$almost_all,
     'C'             => \$in_columns,
-    'E'             => \$show_xattr,
     'F'             => \$with_flag,
-    'H|si'          => S($human_readable, 1000),
+    'H|si'          => sub { $human_readable = 1000 },
     'L|dereference' => \$dereference,
     'R|recurse'     => \$recurse,
     'S'             => sub { set_sort_by 'size' },
     'T|trace'       => \$trace_symlink_paths,
-    'U|unsorted|no-sort-by' => sub { set_sort_by 'none' },
-    'Z'             => \$show_selinux_security_context,
     'a'             => \$all,
     'blocksize=i'   => \$block_size,
     'colour|color:s'=> \$use_colour,
-    'c|use-ctime'   => S($use_time,'ctime'),
+    'c|use-ctime'   => \$use_ctime,
     'd'             => \$dont_expand,
     'find'          => \$find_mode,
     'full-time!'    => \$full_time,
     'g'             => \$hide_owner,
     'heading!'      => \$show_heading,
-    'hide-all!'     => N \&set_show_all,
-    'hide-blocks!'  => N$show_blocks,
+    'hide-all!'     => sub { $hide_time = $hide_group = $hide_mode = $hide_nlinks = $hide_owner = $hide_owner = $hide_size = $hide_time = $_[1]; $long_mode = 1; },
+    'hide-blocks!'  => sub { $show_blocks = ! $_[1] },
     'hide-date!'    => \$hide_time,
     'hide-group!'   => \$hide_group,
-    'hide-inode!'   => N$show_inum,
+    'hide-inode!'   => sub { $show_inum = ! $_[1] },
     'hide-mode!'    => \$hide_mode,
     'hide-num-links!' => \$hide_nlinks,
     'hide-owner!'   => \$hide_owner,
@@ -595,35 +560,39 @@ GetOptions
     'h|human-readable' => sub { $human_readable = 1024 },
     'i|show-inode'  => \$show_inum,
     'l'             => \$long_mode,
-    'localtime!'    => N$use_utc,
-    'max-precision=i' => \&max_prec,
+    'localtime!'    => sub { $use_utc = ! $_[1] },
     'n'             => \$show_numeric,
     'o'             => \$hide_group,
     'q'             => \$show_qmark,
     'r'             => \$reverse,
-    'short-time!'   => N$full_time,
-    'show-all!'     => \&set_show_all,
+    'short-time!'   => sub { $full_time = ! $_[1] },
+    'show-all!'     => sub { $hide_time = $hide_group = $hide_mode = $hide_nlinks = $hide_owner = $hide_owner = $hide_size = $hide_time = ! $_[1]; $long_mode = 1; },
     'show-atime!'   => \$show_atime,
-    'show-context|context!' => \$show_selinux_security_context,
-    'show-ctime!'   => \$show_ctime,
-    'show-date!'    => N$hide_time,
-    'show-group!'   => N$hide_group,
-    'show-mode!'    => N$hide_mode,
-    'show-mtime!'   => \$show_mtime,
-    'show-num-links!' => N$hide_nlinks,
-    'show-owner!'   => N$hide_owner,
-    'show-size!'    => N$hide_size,
-    'show-time!'    => N$hide_time,
-    'show-xattr!'   => \$show_xattr,
-    'sort-by-time!' => sub { set_sort_by $_[-1] ? 'time' : 'none' },
-    'sort-by=s'     => \&set_sort_by,
     's|show-blocks' => \$show_blocks,
-    't'             => sub { set_sort_by 'time' },
-    'utc!'          => \$use_utc,
-    'u|use-atime'   => S($use_time,'atime'),
+    'show-ctime!'   => \$show_ctime,
+    'show-date!'    => sub { $hide_time = ! $_[1] },
+    'show-group!'   => sub { $hide_group = ! $_[1] },
+    'show-mode!'    => sub { $hide_mode = ! $_[1] },
+    'show-mtime!'   => \$show_mtime,
+    'show-num-links!' => sub { $hide_nlinks = ! $_[1] },
+    'show-owner!'   => sub { $hide_owner = ! $_[1] },
+    'show-size!'    => sub { $hide_size = ! $_[1] },
+    'show-time!'    => sub { $hide_time = ! $_[1] },
     (map { my $x = $_; "sort-by-$x" => sub { set_sort_by $x } } keys %sorter),
+   #'sort-by-atime' => sub { set_sort_by 'atime' },
+   #'sort-by-ctime' => sub { set_sort_by 'ctime' },
+   #'sort-by-mode'  => sub { set_sort_by 'mode' },
+   #'sort-by-mtime' => sub { set_sort_by 'mtime' },
    #'sort-by-name'  => sub { set_sort_by 'name' },
-    'help'          => sub { print <<EOF; exit 0 } or die "Try \"lsx --help\" for more information.\n";
+   #'sort-by-size'  => sub { set_sort_by 'size' },
+    'sort-by-time!' => \$sort_by_time,
+    'sort-by=s'     => sub { set_sort_by $_[1] },
+    't'             => \$sort_by_time,
+    'U|unsorted|no-sort-by' => \$unsorted,
+    'utc!'          => \$use_utc,
+    'u|use-atime'   => \$use_atime,
+    'max-precision=i' => \&max_prec,
+    'help'          => sub { print <<EOF; exit 0 } ) or die "Try \"lsx --help\" for more information.\n";
 
 $0 [options]... [files]...
 
@@ -717,7 +686,6 @@ $use_colour = -t STDOUT if ! defined $use_colour;
 
 $long_mode ||= $hide_owner;
 $long_mode ||= $hide_group;
-$use_time  ||= 'mtime';
 
 if ( !$hide_time && !$show_mtime && !$show_ctime && !$show_atime ) {
     if ( $use_double_time || $use_triple_time ) {
@@ -727,22 +695,27 @@ if ( !$hide_time && !$show_mtime && !$show_ctime && !$show_atime ) {
         $show_ctime = 1;
         $show_mtime = 1;
         $sort_by = $sorter{ctime};
-    } elsif ( $use_time eq 'ctime' ) {
+    } elsif ( $use_ctime ) {
         $show_ctime = 1;
-    } elsif ( $use_time eq 'atime' ) {
+    } elsif ( $use_atime ) {
         $show_atime = 1;
     } else {
         $show_mtime = 1;
     }
 }
 
-#
-# Options '-c' and '-u' change '-t' from meaning "sort by mtime" into "sort by
-# ctime" and "sort by atime" respectively.
-#
-
-if ( $sort_by_time ) {
-    $sort_by = $sorter{$use_time};
+if ( $unsorted ) {
+    $sort_by = undef;
+} elsif ( !$sort_by ) {
+    if ( !$sort_by_time ) {
+        $sort_by = $sorter{name};
+    } elsif ( $use_ctime ) {
+        $sort_by = $sorter{ctime};
+    } elsif ( $use_atime ) {
+        $sort_by = $sorter{atime};
+    } else {
+        $sort_by = $sorter{mtime};
+    }
 }
 
 $recurse ||= $find_mode;
