@@ -9,43 +9,33 @@ use POSIX 'strftime', 'S_ISDIR';
 use Getopt::Long;
 use Fcntl ':mode';
 
-my $all;
-my $almost_all;
-my $colour_map;
-my $dereference;
-my $dont_expand;
-my $find_mode;
-my $full_time;
-my $hide_group;
-my $hide_mode;
-my $hide_nlinks;
-my $hide_owner;
-my $hide_size;
-my $human_readable;
-my $in_columns;
+use lib $ENV{HOME}.'/lib/perl';
+use Linux::Syscalls 'lstat', ':o_';
+
+my (    $all, $almost_all,
+        $long_mode, $hide_owner, $hide_group,
+        $with_flag, $in_columns,
+        $use_colour, $colour_map,
+        $sorter_needs_stat,
+        $sort_by, $reverse,
+        $dont_expand, $find_mode, $recurse, $show_symlink,
+        $show_numeric,
+        $show_qmark,
+        $show_inum,
+        $show_blocks,
+        $hide_mode,
+        $hide_nlinks,
+        $hide_size,
+        $show_mtime, $show_ctime, $show_atime, $full_time,
+        $show_xattr, $show_selinux_security_context,
+        $show_heading,
+        $human_readable,
+        $use_utc,
+        $max_prec,
+        $trace_symlink_paths,
+        $dereference,
+    );
 my $link_loop_limit = 32;
-my $long_mode;
-my $max_prec;
-my $recurse;
-my $reverse;
-my $show_atime;
-my $show_blocks;
-my $show_ctime;
-my $show_heading;
-my $show_inum;
-my $show_mtime;
-my $show_numeric;
-my $show_qmark;
-my $show_selinux_security_context;
-my $show_symlink;
-my $show_xattr;
-my $sort_by;
-my $sorter_needs_stat;
-my $tabsize;
-my $trace_symlink_paths;
-my $use_colour;
-my $use_utc;
-my $with_flag;
 
 $colour_map ||= do { my $e = $ENV{LS_COLORS}; $e ? [ split /:/, $e ] : () }
              || [ qw{
@@ -293,8 +283,10 @@ sub format_long($) {
 
     $line .= sprintf "%8d ", $ino if $show_inum;
 
-    $line .= human_format $blocks * 512 # $blksize
-                                  / ( ! $human_readable && $block_size || 1 ), 4
+    my $block_unit = 512;
+    $line .= sprintf "%8s ",
+                     human_format $blocks * ( ! $human_readable && $block_unit / $block_size || 1 ),
+                                  4
         if $show_blocks;
 
     $line .= sprintf "%10.10s ",
@@ -583,7 +575,7 @@ GetOptions
     'L|dereference' => \$dereference,
     'R|recurse'     => \$recurse,
     'S'             => sub { set_sort_by 'size' },
-    'T|tabsize=i'   => \$tabsize,
+    'T'             => sub { print "Usage error: -T TABSIZE is unsupported, and '--trace' is now '-e'\n"; exit 64 },
     'U|unsorted|no-sort-by' => sub { set_sort_by 'none' },
     'Z'             => \$show_selinux_security_context,
     'a'             => \$all,
@@ -608,7 +600,7 @@ GetOptions
     'hide-time!'    => \$hide_time,
     'h|human-readable' => sub { $human_readable = 1024 },
     'i|show-inode'  => \$show_inum,
-    'l'             => \$long_mode,
+    'l|long-mode'   => \$long_mode,
     'localtime!'    => N$use_utc,
     'max-precision=i' => \&max_prec,
     'n'             => \$show_numeric,
@@ -653,9 +645,9 @@ Options to select layout:
     -C                  multi-column
     -F                  put symbol after filename to denote type
     --colo[u]r          change colour depending on filetype
-    -l                  use classic "long mode"
+    -l --long-mode      use classic "long mode"
     -L --derefence      show info about what symlink point to rather than itself
-    -T --trace          show part-by-part redirection of symlinks
+    -e --trace          show part-by-part redirection of symlinks (only with -l)
 
 Options to control which timestamp fields are used and/or presented
     -c                  show ctime rather than mtime in "long mode"
@@ -704,8 +696,6 @@ Options to include specific information:
     -r                  reverse
     -s                  show_blocks
 EOF
-
-defined $tabsize and warn "The -T/--tabsize option is ignored\n";
 
 #
 # Patch up for root usage
