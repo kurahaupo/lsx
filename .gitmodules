@@ -1,0 +1,8 @@
+[submodule "git-precommit-checks"]
+	path = .git.precommit.d
+	url = git+ssh://github.com/kurahaupo/git-precommit-checks
+	branch = as_submodule
+[submodule "linux-syscalls-perl"]
+	path = lib/perl
+	url = git+ssh://github.com/kurahaupo/linux-syscalls-perl
+	branch = main
