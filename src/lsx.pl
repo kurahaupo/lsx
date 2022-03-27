@@ -615,7 +615,7 @@ Options to control which timestamp fields are used and/or presented
 
 Options to control sorting
     --sort-by {atime,ctime,file,mode,mtime,name}
-    -t, --sort-by-time  sort by whichever time field is displayed in long mode 
+    -t, --sort-by-time  sort by whichever time field is displayed in long mode
     -U, --unsorted      display in order returned by filesystem
 
 Options to control how information is formatted
