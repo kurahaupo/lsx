@@ -75,7 +75,7 @@ sub format_long_heading() {
 
     $line .= sprintf "%8s ", "blocks" if $show_blocks;
 
-    $line .= sprintf "%-10s ", "mode" unless $hide_mode;
+    $line .= sprintf "%-10s ", "perms" unless $hide_mode;
 
     $line .= sprintf "%4s ", "link" unless $hide_nlinks;
 
@@ -242,21 +242,17 @@ sub trace_symlinks($$$) {
     PARTS: while (@parts) {
         my $part = shift @parts;
         my $newpref = "$prefix$part";
-        $result .= $part;
 
-        while ( $part ne '.' && $part ne '..' and my $l = readlink $newpref ) {
+        if ( $part ne '.' && $part ne '..' and my $l = readlink $newpref ) {
             $limit && --$limit or do {
-                $result .= $use_colour
-                            ? " -> ".colourize("...",0)
-                            : " -> ...";
+                $result .= "$part -> [...]";
                 last PARTS;
             };
-            my $t = trace_symlinks($prefix, $l, $limit);
-            $result .= @parts ? "[-> $t]" : " -> $t";
-            $l =~ s<.*/><> and $prefix .= $&;
-            $part = $l;
-            $newpref = "$prefix$part";
+            $l = trace_symlinks($prefix, $l, $limit);
+            $part .= " -> $l";
+            $part = "[$part]" if @parts;
         }
+        $result .= $part;
 
         $result .= "/" if @parts;
         $prefix = $newpref;
@@ -500,7 +496,7 @@ sub ls_list(@) {
 my %sorter = (
         file  => sub { $a->{file}       cmp $b->{file}       },
         name  => sub { $a->{name}       cmp $b->{name}       },
-        mode  => sub { $b->{stat}->[2]  <=> $a->{stat}->[2]  },
+        perm  => sub { $b->{stat}->[2]  <=> $a->{stat}->[2]  },
         mtime => sub { $b->{stat}->[9]  <=> $a->{stat}->[9]  },
         ctime => sub { $b->{stat}->[10] <=> $a->{stat}->[10] },
         atime => sub { $b->{stat}->[8]  <=> $a->{stat}->[8]  },
@@ -511,7 +507,7 @@ my %sorter_needs_stat = (
         atime => 1,
         ctime => 1,
         mtime => 1,
-        mode  => 1,
+        perm  => 1,
     );
 
 my ( $hide_time,
@@ -526,7 +522,7 @@ my ( $hide_time,
 
 sub set_sort_by($) {
     $sorter_needs_stat = $sorter_needs_stat{$_[0]};
-    $sort_by = $sorter{$_[0]} || die "No way to sort on $_[0]\n";
+    $sort_by = $sorter{$_[0]} || die "No way to sort on '$_[0]'\n";
 }
 
 Getopt::Long::config(qw( no_ignore_case bundling require_order ));
@@ -582,10 +578,16 @@ GetOptions(
     'show-owner!'   => sub { $hide_owner = ! $_[1] },
     'show-size!'    => sub { $hide_size = ! $_[1] },
     'show-time!'    => sub { $hide_time = ! $_[1] },
+    (map { my $x = $_; "sort-by-$x" => sub { set_sort_by $x } } keys %sorter),
+   #'sort-by-atime' => sub { set_sort_by 'atime' },
+   #'sort-by-ctime' => sub { set_sort_by 'ctime' },
+   #'sort-by-mode'  => sub { set_sort_by 'mode' },
+   #'sort-by-mtime' => sub { set_sort_by 'mtime' },
+   #'sort-by-name'  => sub { set_sort_by 'name' },
     'sort-by-time!' => \$sort_by_time,
     'sort-by=s'     => sub { set_sort_by $_[1] },
     't'             => \$sort_by_time,
-    'U|unsorted|sort-by-none' => \$unsorted,
+    'U|unsorted|no-sort-by' => \$unsorted,
     'utc!'          => \$use_utc,
     'u|use-atime'   => \$use_atime,
     'max-precision=i' => \&max_prec,
