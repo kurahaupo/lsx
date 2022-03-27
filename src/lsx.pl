@@ -136,18 +136,18 @@ sub human_format($$) {
 
 # smode & 0170000 => (smode >> 12 & 0x0f) =>
 #   000: deleted
-#   001: IFIFO   
-#   002: IFCHR   
+#   001: IFIFO
+#   002: IFCHR
 #   003:
-#   004: IFDIR   
+#   004: IFDIR
 #   005:
-#   006: IFBLK   
+#   006: IFBLK
 #   007:
-#   010: IFREG   
+#   010: IFREG
 #   011:
-#   012: IFLNK   
+#   012: IFLNK
 #   013:
-#   014: IFSOCK 
+#   014: IFSOCK
 #   015:
 #   016:
 #   017:
