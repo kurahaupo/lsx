@@ -10,7 +10,9 @@ use Getopt::Long;
 use Fcntl ':mode';
 
 use lib $ENV{HOME}.'/lib/perl';
-use Linux::Syscalls 'lstat', ':O_';
+
+use Time::Nanosecond 'strftime', 'localtime', 'gmtime';
+use Linux::Syscalls 'fstatat', ':AT_', ':O_', ':timeres_';
 
 my (    $all, $almost_all,
         $long_mode, $hide_owner, $hide_group,
@@ -26,7 +28,7 @@ my (    $all, $almost_all,
         $hide_mode,
         $hide_nlinks,
         $hide_size,
-        $show_mtime, $show_ctime, $show_atime, $full_time,
+        $show_mtime, $show_ctime, $show_atime, $full_time, $time_res,
         $show_xattr, $show_selinux_security_context,
         $show_heading,
         $human_readable,
@@ -36,6 +38,7 @@ my (    $all, $almost_all,
         $dereference,
     );
 my $link_loop_limit = 32;
+my $time_precision = TIMERES_NANOSECOND;
 
 $colour_map ||= do { my $e = $ENV{LS_COLORS}; $e ? [ split /:/, $e ] : () }
              || [ qw{
@@ -56,20 +59,21 @@ my $block_size = $ENV{POSIXLY_CORRECT} ? 512 : 1024;
 sub format_date_heading($) {
     my ( $head ) = @_;
     $head .= ' (UTC)' if $use_utc;
-    return sprintf $full_time ? "%-19s " : "%-12s ", $head;
+    my $w = $full_time ? 24 + $time_res + !!$time_res : 12;
+    return sprintf "%-*s ", $w, $head;
 }
 
 sub format_date($) {
     my $time = shift;
     return strftime( +(
-                        $full_time ? "%Y-%m-%d,%H:%M:%S " :
+                        $full_time ? "%F %T%.${time_res}N %z" :
                         $time > $^T - 15552000  # less than six months old?
-                            ? "%b %d %H:%M "
-                            : "%b %d  %Y "
+                            ? "%b %d %H:%M"
+                            : "%b %d  %Y"
                        ),
                        $use_utc ? gmtime $time
                                 : localtime $time
-                     )
+                     ).' ';
 }
 
 sub format_long_heading() {
@@ -269,7 +273,7 @@ sub format_long($) {
     my $ref = $_[0];
     my $name = $ref->{name};
     my $file = $ref->{file} ||= $name;
-    my $stat = $ref->{stat} ||= [ $dereference ? stat $file : lstat $file ];
+    my $stat = $ref->{stat} ||= fstatat undef, $file, $dereference ? undef : AT_SYMLINK_NOFOLLOW;
 
     @$stat or do {
         warn "Couldn't stat $file: $!\n";
@@ -370,7 +374,7 @@ sub format_short($) {
     my $length = length $line;
 
     if ( $with_flag || $show_blocks || $show_inum || $use_colour ) {
-        $stat = $ref->{stat} ||= [ $dereference ? stat $file : lstat $file ];
+        $stat = $ref->{stat} ||= fstatat undef, $file, $dereference ? undef : AT_SYMLINK_NOFOLLOW;
 
         my ( $dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,
             $atime,$mtime,$ctime,$blksize,$blocks ) = @$stat;
@@ -560,6 +564,38 @@ sub set_show_all($$) {
     $long_mode = 1;
 }
 
+sub set_time_res {
+    my $res = pop @_ || 'ns';
+
+    $full_time = 1; # --hires-time implies --full-time
+
+    my %resmap = (
+        'none'          => TIMERES_SECOND,      'no'    => TIMERES_SECOND,
+        ''              => TIMERES_SECOND,      '-'     => TIMERES_SECOND,
+
+        'seconds'       => TIMERES_SECOND,      's'     => TIMERES_SECOND,
+        'deciseconds'   => TIMERES_DECISECOND,  'ds'    => TIMERES_DECISECOND,
+        'centiseconds'  => TIMERES_CENTISECOND, 'cs'    => TIMERES_CENTISECOND,
+        'milliseconds'  => TIMERES_MILLISECOND, 'ms'    => TIMERES_MILLISECOND,
+        'microseconds'  => TIMERES_MICROSECOND, 'us'    => TIMERES_MICROSECOND,
+                                                'µs'    => TIMERES_MICROSECOND,
+                                                'μs'    => TIMERES_MICROSECOND,
+        'nanoseconds'   => TIMERES_NANOSECOND,  'ns'    => TIMERES_NANOSECOND,
+        'picoseconds'   => TIMERES_PICOSECOND,  'ps'    => TIMERES_PICOSECOND,
+
+        map { ( $_ => $_ ) } TIMERES_SECOND,
+                             TIMERES_DECISECOND,  TIMERES_CENTISECOND,
+                             TIMERES_MILLISECOND, TIMERES_MICROSECOND,
+                             TIMERES_NANOSECOND,  TIMERES_PICOSECOND,
+
+    );
+
+    exists $resmap{$res} and do { $time_res = $resmap{$res}; return };
+    $res =~ s/s(e(c(o(nd?)?)?s?)?)?$/seconds/;
+    exists $resmap{$res} and do { $time_res = $resmap{$res}; return };
+    die "Invalid time resolution symbol $res\n";
+}
+
 sub N($) { my $r = \$_[0]; $$r && ref $$r eq 'CODE' ? sub { $_[-1] = !$_[-1]; goto &$$r } : sub { $$r = !$_[-1] } }
 sub S($$) { my $r = \$_[0]; my $v = $_[1]; sub { $$r = $v } }
 Getopt::Long::config(qw( no_ignore_case bundling require_order ));
@@ -586,25 +622,25 @@ GetOptions
     'e|trace'       => \$trace_symlink_paths,
     'find'          => \$find_mode,
     'full-time!'    => \$full_time,
-    'g'             => \$hide_owner,
     'heading!'      => \$show_heading,
     'hide-all!'     => N \&set_show_all,
     'hide-blocks!'  => N$show_blocks,
     'hide-date!'    => \$hide_time,
-    'hide-group!'   => \$hide_group,
+    'o|hide-group!' => \$hide_group,
     'hide-inode!'   => N$show_inum,
     'hide-mode!'    => \$hide_mode,
     'hide-num-links!' => \$hide_nlinks,
-    'hide-owner!'   => \$hide_owner,
+    'g|hide-owner!' => \$hide_owner,
     'hide-size!'    => \$hide_size,
     'hide-time!'    => \$hide_time,
+    'hires-time:s'  => \&set_time_res,
+    'no-hires-time' => sub { $time_res = $full_time = 0; },
     'h|human-readable' => sub { $human_readable = 1024 },
     'i|show-inode'  => \$show_inum,
     'l|long-mode'   => \$long_mode,
     'localtime!'    => N$use_utc,
     'max-precision=i' => \&max_prec,
     'n'             => \$show_numeric,
-    'o'             => \$hide_group,
     'q'             => \$show_qmark,
     'r'             => \$reverse,
     'short-time!'   => N$full_time,
@@ -769,7 +805,7 @@ if ( ! @ARGV && ! $dont_expand && ! $recurse ) {
             my (@F, @D);
             for ( @_ ) {
                 $_->{file} ||= $_->{name};
-                my @S = lstat $_->{file};
+                my @S = fstatat undef, $_->{file}, AT_SYMLINK_NOFOLLOW;
                 @S or do { warn "$_->{file}: $!\n"; ++$errs; next };
                 $_->{stat} = \@S;
                 if ( S_ISDIR($S[2]) && $lim ) {
