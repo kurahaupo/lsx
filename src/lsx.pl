@@ -97,6 +97,8 @@ sub format_long_heading() {
 
     $line .= format_date_heading "mtime" if $show_mtime;
 
+    $line .= ' ' if !$show_ctime != !$show_mtime;
+
     $line .= format_date_heading "atime" if $show_atime;
 
     $line .= "name";
@@ -315,11 +317,23 @@ sub format_long($) {
         unless $hide_size;
 
     if ( $show_ctime || $show_mtime || $show_atime ) {
-        $mtime >= $ctime or $line =~ s/ ?$/*/o;
+        if ($show_ctime) {
+            $line .= format_date $ctime;
+            if ($show_mtime) {
+                # Show both
+                $line .= format_date $mtime;
+            } else {
+                $line =~ s/ $//;
+                $line .= $ctime <= $mtime ? '  ' : '> ';
+            }
+        }
+        elsif ($show_mtime) {
+            $line .= format_date $mtime;
+            $line =~ s/ $//;
+            $line .= $ctime <= $mtime ? '  ' : '< ';
+        }
 
-        $line .= format_date $ctime if $show_ctime;
-
-        $line .= format_date $mtime if $show_mtime;
+        $line =~ s/ ([<>] )$/$1/;
 
         $line .= format_date $atime if $show_atime;
     }
