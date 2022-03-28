@@ -5,7 +5,7 @@ use warnings;
 use strict;
 
 use Carp 'croak';
-use POSIX 'strftime', 'S_ISDIR';
+use POSIX 'strftime', 'S_ISDIR', 'floor', 'log10';
 use Getopt::Long;
 use Fcntl ':mode';
 
@@ -28,7 +28,7 @@ my (    $all, $almost_all,
         $hide_mode,
         $hide_nlinks,
         $hide_size,
-        $show_mtime, $show_ctime, $show_atime, $full_time, $time_res,
+        $show_mtime, $show_ctime, $show_atime,
         $show_xattr, $show_selinux_security_context,
         $show_heading,
         $human_readable,
@@ -59,14 +59,14 @@ my $block_size = $ENV{POSIXLY_CORRECT} ? 512 : 1024;
 sub format_date_heading($) {
     my ( $head ) = @_;
     $head .= ' (UTC)' if $use_utc;
-    my $w = $full_time ? 24 + $time_res + !!$time_res : 12;
+    my $w = defined $time_precision ? 24 + $time_precision + !!$time_precision : 12;
     return sprintf "%-*s ", $w, $head;
 }
 
 sub format_date($) {
     my $time = shift;
     return strftime( +(
-                        $full_time ? "%F %T%.${time_res}N %z" :
+                        defined $time_precision ? "%F %T%.${time_precision}N %z" :
                         $time > $^T - 15552000  # less than six months old?
                             ? "%b %d %H:%M"
                             : "%b %d  %Y"
@@ -563,11 +563,24 @@ sub set_show_all($$) {
 }
 
 sub set_time_res {
-    my $res = pop @_ || 'ns';
+    my $res = pop @_;
 
-    $full_time = 1; # --hires-time implies --full-time
+    if (! defined $res) {
+        $time_precision = undef;
+        return;
+    }
 
-    my %resmap = (
+    $res = TIMERES_NANOSECOND if $res eq '';  # different from literal '0'
+
+    # Accepts number of digits
+    if ( $res =~ /^\d+$/ && $res <= 12 ) { $time_precision = $res; return }
+
+    # Decimal fraction indicating precision
+    if ( $res =~ /^0\.\d+$/ ) { $time_precision = -floor(log10($res)); return }
+
+    use feature 'state';
+
+    state $resmap = {
         'none'          => TIMERES_SECOND,      'no'    => TIMERES_SECOND,
         ''              => TIMERES_SECOND,      '-'     => TIMERES_SECOND,
 
@@ -581,21 +594,18 @@ sub set_time_res {
         'nanoseconds'   => TIMERES_NANOSECOND,  'ns'    => TIMERES_NANOSECOND,
         'picoseconds'   => TIMERES_PICOSECOND,  'ps'    => TIMERES_PICOSECOND,
 
-        map { ( $_ => $_ ) } TIMERES_SECOND,
-                             TIMERES_DECISECOND,  TIMERES_CENTISECOND,
-                             TIMERES_MILLISECOND, TIMERES_MICROSECOND,
-                             TIMERES_NANOSECOND,  TIMERES_PICOSECOND,
+    };
 
-    );
-
-    exists $resmap{$res} and do { $time_res = $resmap{$res}; return };
-    $res =~ s/s(e(c(o(nd?)?)?s?)?)?$/seconds/;
-    exists $resmap{$res} and do { $time_res = $resmap{$res}; return };
+    for ( $res, $res =~ s/s(e(c(o(nd?)?)?s?)?)?$/seconds/r, $res.'s' ) {
+        $time_precision = $resmap->{$_} // next;
+        return
+    }
     die "Invalid time resolution symbol $res\n";
 }
 
 sub N($) { my $r = \$_[0]; $$r && ref $$r eq 'CODE' ? sub { $_[-1] = !$_[-1]; goto &$$r } : sub { $$r = !$_[-1] } }
 sub S($$) { my $r = \$_[0]; my $v = $_[1]; sub { $$r = $v } }
+sub U($) { my $r = \$_[0]; sub { $$r = undef } }
 Getopt::Long::config(qw( no_ignore_case bundling require_order ));
 GetOptions
     '1'             => S($in_columns, 0),
@@ -619,7 +629,7 @@ GetOptions
     'd'             => \$dont_expand,
     'e|trace'       => \$trace_symlink_paths,
     'find'          => \$find_mode,
-    'full-time!'    => \$full_time,
+    'full-time:s'   => \&set_time_res,
     'heading!'      => \$show_heading,
     'hide-all!'     => N \&set_show_all,
     'hide-blocks!'  => N$show_blocks,
@@ -631,8 +641,6 @@ GetOptions
     'g|hide-owner!' => \$hide_owner,
     'hide-size!'    => \$hide_size,
     'hide-time!'    => \$hide_time,
-    'hires-time:s'  => \&set_time_res,
-    'no-hires-time' => sub { $time_res = $full_time = 0; },
     'h|human-readable' => sub { $human_readable = 1024 },
     'i|show-inode'  => \$show_inum,
     'l|long-mode'   => \$long_mode,
@@ -641,7 +649,7 @@ GetOptions
     'n'             => \$show_numeric,
     'q'             => \$show_qmark,
     'r'             => \$reverse,
-    'short-time!'   => N$full_time,
+    'short-time|no-full-time!' => U$time_precision,
     'show-all!'     => \&set_show_all,
     'show-atime!'   => \$show_atime,
     'show-context|context!' => \$show_selinux_security_context,
@@ -695,7 +703,8 @@ Options to control sorting
 Options to control how information is formatted
     --short-time        display time(s) as month, day, and either time-of-day
                         (if within the last 180 days) or year (otherwise)
-    --full-time         display time(s) as year, month, day, hour, minute & second
+    --full-time[=PREC]  display time(s) as year, month, day, hour, minute & second
+                        display fractional seconds to PREC-digit precision
     --localtime         display time(s) relative to current locale (\$TZ)
     --utc               display time(s) relative to GMT
 
@@ -761,7 +770,7 @@ $use_time  ||= 'mtime';
 
 if ( !$hide_time && !$show_mtime && !$show_ctime && !$show_atime ) {
     if ( $use_double_time || $use_triple_time ) {
-        $full_time = 1;
+        $time_precision //= TIMERES_NANOSECOND;
         $long_mode = 1;
         $show_atime = 1 if $use_triple_time;
         $show_ctime = 1;
