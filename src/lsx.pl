@@ -655,7 +655,7 @@ GetOptions
     'g|hide-owner!' => \$hide_owner,
     'hide-size!'    => \$hide_size,
     'hide-time!'    => \$hide_time,
-    'h|human-readable' => sub { $human_readable = 1024 },
+    'h|human-readable' => S($human_readable, 1024),
     'i|show-inode'  => \$show_inum,
     'l|long-mode'   => \$long_mode,
     'localtime!'    => N$use_utc,
