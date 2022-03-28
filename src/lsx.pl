@@ -93,8 +93,6 @@ sub format_long_heading() {
 
     $line .= sprintf "%8s ", "size" unless $hide_size;
 
-    #$line .= " " if $show_ctime || $show_mtime || $show_atime;
-
     $line .= format_date_heading "ctime" if $show_ctime;
 
     $line .= format_date_heading "mtime" if $show_mtime;
