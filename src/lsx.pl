@@ -14,6 +14,8 @@ use lib $ENV{HOME}.'/lib/perl';
 use Time::Nanosecond 'strftime', 'localtime', 'gmtime';
 use Linux::Syscalls 'fstatat', ':AT_', ':O_', ':timeres_';
 
+use constant { TIMEFMT_SHORT => -1 };
+
 my (    $all, $almost_all,
         $long_mode, $hide_owner, $hide_group,
         $with_flag, $in_columns,
@@ -38,7 +40,7 @@ my (    $all, $almost_all,
         $dereference,
     );
 my $link_loop_limit = 32;
-my $time_precision = TIMERES_NANOSECOND;
+my $time_precision = undef;
 
 $colour_map ||= do { my $e = $ENV{LS_COLORS}; $e ? [ split /:/, $e ] : () }
              || [ qw{
@@ -59,20 +61,21 @@ my $block_size = $ENV{POSIXLY_CORRECT} ? 512 : 1024;
 sub format_date_heading($) {
     my ( $head ) = @_;
     $head .= ' (UTC)' if $use_utc;
-    my $w = defined $time_precision ? 25 + $time_precision + !!$time_precision : 12;
+    my $w = $time_precision == TIMEFMT_SHORT
+                ? 12
+                : 25 + $time_precision + !!$time_precision;
     return sprintf "%-*s ", $w, $head;
 }
 
 sub format_date($) {
     my $time = shift;
-    return strftime( +(
-                        defined $time_precision ? "%F %T%.${time_precision}N %z" :
-                        $time > $^T - 15552000  # less than six months old?
-                            ? "%b %d %H:%M"
-                            : "%b %d  %Y"
-                       ),
-                       $use_utc ? gmtime $time
-                                : localtime $time
+    return strftime( $time_precision == TIMEFMT_SHORT
+                        ? $time > $^T - 15552000
+                            ? "%b %d %H:%M" # newer than six months
+                            : "%b %d  %Y"   # older than six months
+                        : "%F %T%.${time_precision}N %z",
+                     $use_utc ? gmtime $time
+                              : localtime $time
                      ).' ';
 }
 
@@ -580,21 +583,25 @@ sub set_time_res {
     my $res = pop @_;
 
     if (! defined $res) {
-        $time_precision = undef;
+        $time_precision = TIMEFMT_SHORT;
         return;
     }
 
     $res = TIMERES_NANOSECOND if $res eq '';  # different from literal '0'
 
     # Accepts number of digits
-    if ( $res =~ /^\d+$/ && $res <= 12 ) { $time_precision = $res; return }
+    if ( $res =~ /^\d+$/ && $res <= 9 ) { $time_precision = $res; return }
 
-    # Decimal fraction indicating precision
+    # Accepts decimal fraction indicating precision
     if ( $res =~ /^0\.\d+$/ ) { $time_precision = -floor(log10($res)); return }
 
     use feature 'state';
 
     state $resmap = {
+
+        'brief'         => TIMEFMT_SHORT,       'short' => TIMEFMT_SHORT,
+        'full'          => TIMERES_NANOSECOND,
+
         'none'          => TIMERES_SECOND,      'no'    => TIMERES_SECOND,
         ''              => TIMERES_SECOND,      '-'     => TIMERES_SECOND,
 
@@ -606,7 +613,7 @@ sub set_time_res {
                                                 'µs'    => TIMERES_MICROSECOND,
                                                 'μs'    => TIMERES_MICROSECOND,
         'nanoseconds'   => TIMERES_NANOSECOND,  'ns'    => TIMERES_NANOSECOND,
-        'picoseconds'   => TIMERES_PICOSECOND,  'ps'    => TIMERES_PICOSECOND,
+#       'picoseconds'   => TIMERES_PICOSECOND,  'ps'    => TIMERES_PICOSECOND,
 
     };
 
@@ -614,12 +621,11 @@ sub set_time_res {
         $time_precision = $resmap->{$_} // next;
         return
     }
-    die "Invalid time resolution symbol $res\n";
+    die "Invalid time resolution $res\n";
 }
 
 sub N($) { my $r = \$_[0]; $$r && ref $$r eq 'CODE' ? sub { $_[-1] = !$_[-1]; goto &$$r } : sub { $$r = !$_[-1] } }
 sub S($$) { my $r = \$_[0]; my $v = $_[1]; sub { $$r = $v } }
-sub U($) { my $r = \$_[0]; sub { $$r = undef } }
 Getopt::Long::config(qw( no_ignore_case bundling require_order ));
 GetOptions
     '1'             => S($in_columns, 0),
@@ -643,7 +649,8 @@ GetOptions
     'd'             => \$dont_expand,
     'e|trace'       => \$trace_symlink_paths,
     'find'          => \$find_mode,
-    'full-time:s'   => \&set_time_res,
+    'full-time|time:s' => \&set_time_res,
+ 'no-full-time|short-time|brief-time' => S($time_precision, -1),
     'heading!'      => \$show_heading,
     'hide-all!'     => N \&set_show_all,
     'hide-blocks!'  => N$show_blocks,
@@ -663,7 +670,6 @@ GetOptions
     'n'             => \$show_numeric,
     'q'             => \$show_qmark,
     'r'             => \$reverse,
-    'short-time|no-full-time!' => U$time_precision,
     'show-all!'     => \&set_show_all,
     'show-atime!'   => \$show_atime,
     'show-context|context!' => \$show_selinux_security_context,
@@ -798,6 +804,10 @@ if ( !$hide_time && !$show_mtime && !$show_ctime && !$show_atime ) {
         $show_mtime = 1;
     }
 }
+
+$time_precision //= -1;
+$time_precision >= -1 && $time_precision <= TIMERES_NANOSECOND
+    or die "Time precision $time_precision not supported\n";
 
 #
 # Options '-c' and '-u' change '-t' from meaning "sort by mtime" into "sort by
