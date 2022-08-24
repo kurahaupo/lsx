@@ -59,7 +59,7 @@ my $block_size = $ENV{POSIXLY_CORRECT} ? 512 : 1024;
 sub format_date_heading($) {
     my ( $head ) = @_;
     $head .= ' (UTC)' if $use_utc;
-    my $w = defined $time_precision ? 24 + $time_precision + !!$time_precision : 12;
+    my $w = defined $time_precision ? 25 + $time_precision + !!$time_precision : 12;
     return sprintf "%-*s ", $w, $head;
 }
 
