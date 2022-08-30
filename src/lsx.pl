@@ -207,30 +207,94 @@ sub file_match($$) {
 
 {
 my $colour_kinds;
-my $colour_match;
+my ($colour_match_glob,   $colour_match_glob_re,
+    $colour_match_suffix, $colour_match_suffix_re,
+    $colour_match_prefix, $colour_match_prefix_re);
 sub colourize($$) {
     my ( $name, $mode ) = @_;
-    if ( ! $colour_kinds && ! $colour_match ) {
+    if ( ! $colour_kinds && ! $colour_match_glob
+                         && ! $colour_match_prefix
+                         && ! $colour_match_suffix ) {
         for my $c ( @$colour_map ) {
             my ( $p, $x ) = split /=/, $c, 2;
-            if ( $p =~ /[*?]/ ) {
-                $colour_match->{$p} = $x;
+            if ( $p =~ m{ ^\*$
+                        | .\*.
+                        | \?
+                        }x ) {
+                # If pattern consists *entirely* of '*', or has '?' anywhere,
+                # or has '*' that's neither initial nor final, then treat this
+                # as a full glob, which means we need to scan it to find the
+                # match.
+                $colour_match_glob->{$p} = $x;
+            }
+            elsif ( $p =~ /^\*/ ) {
+                # If it starts with '*' (and contains no other wildcard chars)
+                # then treat as a suffix match
+                $colour_match_suffix->{$'} = $x;
+            }
+            elsif ( $p =~ /\*$/ ) {
+                # If it ends with '*' (and contains no other wildcard chars)
+                # then treat as a prefix match
+                $colour_match_prefix->{$`} = $x;
             } else {
                 $colour_kinds->{$p} = $x;
             }
         }
+        for my $cx ( [ \$colour_match_suffix, \$colour_match_suffix_re, '^', '' ],
+                     [ \$colour_match_prefix, \$colour_match_prefix_re, '', '$' ] ) {
+            my ($mr, $rr, $s, $e) = @$cx;
+            $$mr || next;
+            my @k = sort { length($b) <=> length($a) } keys %$$mr;
+            my $q = join '|', map { quotemeta $_ } @k;
+            $q = "$s($q)$e";
+            $q = qr/$q/;
+            $$rr = $q;
+        }
+        if ($colour_match_glob) {
+            my @k = sort { length($b) <=> length($a) } keys %$colour_match_glob;
+            my $q = join '|',
+                        map {
+                            s{
+                                [*?\\.^\[\]\$]
+                            }{
+                                $& eq '*' ? '.*' :
+                                $& eq '?' ? '.'  :
+                                '\\'.$&
+                            }egrx
+                        } @k;
+            $q = "^($q)\$";
+            $colour_match_glob_re = qr/$q/;
+        }
     }
+
+    printf STDERR "Match Glob=%s\n", $colour_match_glob_re;
 
     my $cx = "";
     MATCH: {
-        for my $c ( keys %$colour_match ) {
-            if ( file_match $name, $c ) {
-                $cx = $colour_match->{$c};
-                last MATCH;
-            }
+        if ( $colour_match_suffix_re && $name =~ $colour_match_suffix_re ) {
+            $cx = $colour_match_suffix->{$&};
+            printf STDERR "Colourizing %s -> suffix %s -> %s\n", $name, $&, $cx;
+            last MATCH;
         }
+        if ( $colour_match_prefix_re && $name =~ $colour_match_prefix_re ) {
+            $cx = $colour_match_prefix->{$&};
+            printf STDERR "Colourizing %s -> prefix %s -> %s\n", $name, $&, $cx;
+            last MATCH;
+        }
+        if ($colour_match_glob_re && $name =~ $$colour_match_glob_re) {
+            for my $c ( keys %$colour_match_glob ) {
+                if ( file_match $name, $c ) {
+                    $cx = $colour_match_glob->{$c};
+                    printf STDERR "Colourizing %s -> glob %s -> %s\n", $name, $&, $cx;
+                    last MATCH;
+                }
+            }
+            printf STDERR "Colourizing %s -> glob %s -> %s\n", $name, $&, $cx;
+        }
+        $mode //= 16 << 12;
         if ( my $cxx = $mkind[ $mode >> 12 || 16 ] ) {
             $cx = $colour_kinds->{$cxx};
+            printf STDERR "Colourizing %s -> mkind %s -> %s\n", $name, $cxx, $cx;
             last MATCH;
         }
         $cx = $colour_kinds->{no};
