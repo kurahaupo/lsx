@@ -44,14 +44,14 @@ my $time_precision = undef;
 
 $colour_map ||= do { my $e = $ENV{LS_COLORS}; $e ? [ split /:/, $e ] : () }
              || [ qw{
-                   no=00 fi=00 di=01;34 ln=01;36 pi=40;33 so=01;35 do=01;35
-                   bd=40;33;01 cd=40;33;01 or=40;31;01 ex=01;32
-                   *.tar=01;31 *.tgz=01;31 *.arj=01;31 *.taz=01;31 *.lzh=01;31
-                   *.zip=01;31 *.z=01;31 *.Z=01;31 *.gz=01;31 *.bz2=01;31
-                   *.deb=01;31 *.rpm=01;31 *.jpg=01;35 *.png=01;35 *.gif=01;35
-                   *.bmp=01;35 *.ppm=01;35 *.tga=01;35 *.xbm=01;35 *.xpm=01;35
-                   *.tif=01;35 *.png=01;35 *.mpg=01;35 *.avi=01;35 *.fli=01;35
-                   *.gl=01;35 *.dl=01;35
+                   no=0 fi=0 di=34;1 ln=36;1 pi=40;33 so=35;1 do=35;1 bd=40;33;1 cd=40;33;1
+                   or=40;31;9 ex=32;1
+                   *.tar=31;1  *.tgz=31;1  *.arj=31;1  *.taz=31;1  *.lzh=31;1
+                   *.zip=31;1    *.z=31;1    *.Z=31;1   *.gz=31;1  *.bz2=31;1
+                   *.deb=31;1  *.rpm=31;1  *.jpg=35;1  *.png=35;1  *.gif=35;1
+                   *.bmp=35;1  *.ppm=35;1  *.tga=35;1  *.xbm=35;1  *.xpm=35;1
+                   *.tif=35;1  *.png=35;1  *.mpg=35;1  *.avi=35;1  *.fli=35;1
+                    *.gl=35;1   *.dl=35;1
                  }];
 $use_colour = 'auto';
 $max_prec = 1;
@@ -166,8 +166,23 @@ sub human_format($$) {
 #   015:
 #   016:
 #   017:
-# LS_COLORS='no=00:fi=00:di=01;34:ln=01;36:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:ex=01;32'
+
+# LS_COLORS='no=0:fi=0:di=1;34:ln=1;36:pi=40;33:so=1;35:do=1;35:bd=40;33;1:cd=40;33;1:or=40;31;1:ex=1;32'
 #
+# where:
+#  no=0         ⇒ 0        NOne (missing)
+#  fi=0         ⇒ S_IFREG  regular FIle
+#  di=34;1      ⇒ S_IFDIR  DIrectory
+#  ln=36;1      ⇒ S_IFLNK  symLiNk
+#  pi=40;33     ⇒ S_IFIFO  PIpe/fifo
+#  so=35;1      ⇒ S_IFSOCK SOcket
+#  do=35;1      ⇒ S_IFDOOR DOor (Solaris only)
+#  bd=40;33;1   ⇒ S_IFBLK  Block Device (hd)
+#  cd=40;33;1   ⇒ S_IFCHR  Char Device (tty)
+#
+#  or=40;31;1   ⇒ "ORphan" (dangling) symlink, encoded as 16
+#  ex=32;1      ⇒ EXecutable
+
 my @mchar = qw( ? p c ? d X b ? - ? l ? S ? ? ? );
 my @mkind = qw( 0 pi cd 0 di X bd 0 no 0 ln 0 so 0 0 0 or );
 my @xchar = qw( 0 0 0 0 / 0 0 0 0 0 @ 0 = 0 0 0 );
