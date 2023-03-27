@@ -5,12 +5,16 @@ use warnings;
 use strict;
 
 use Carp 'croak';
-use POSIX 'strftime', 'S_ISDIR', 'floor';
+use POSIX 'strftime', 'S_ISDIR', 'floor', 'log10';
 use Getopt::Long;
 use Fcntl ':mode';
 
 use lib $ENV{HOME}.'/lib/perl';
-use Linux::Syscalls 'lstat', ':o_';
+
+use Time::Nanosecond 'strftime', 'localtime', 'gmtime';
+use Linux::Syscalls 'fstatat', ':AT_', ':O_', ':timeres_';
+
+use constant { TIMEFMT_SHORT => -1 };
 
 my (    $all, $almost_all,
         $long_mode, $hide_owner, $hide_group,
@@ -26,7 +30,7 @@ my (    $all, $almost_all,
         $hide_mode,
         $hide_nlinks,
         $hide_size,
-        $show_mtime, $show_ctime, $show_atime, $full_time,
+        $show_mtime, $show_ctime, $show_atime,
         $show_xattr, $show_selinux_security_context,
         $show_heading,
         $human_readable,
@@ -36,19 +40,18 @@ my (    $all, $almost_all,
         $dereference,
     );
 my $link_loop_limit = 32;
-my $time_precision = 9;
-my $use_utf8 = 1;   # always assume UTF-8 encoding in filenames (for counting columns)
+my $time_precision = undef;
 
 $colour_map ||= do { my $e = $ENV{LS_COLORS}; $e ? [ split /:/, $e ] : () }
              || [ qw{
-                   no=00 fi=00 di=01;34 ln=01;36 pi=40;33 so=01;35 do=01;35
-                   bd=40;33;01 cd=40;33;01 or=40;31;01 ex=01;32
-                   *.tar=01;31 *.tgz=01;31 *.arj=01;31 *.taz=01;31 *.lzh=01;31
-                   *.zip=01;31 *.z=01;31 *.Z=01;31 *.gz=01;31 *.bz2=01;31
-                   *.deb=01;31 *.rpm=01;31 *.jpg=01;35 *.png=01;35 *.gif=01;35
-                   *.bmp=01;35 *.ppm=01;35 *.tga=01;35 *.xbm=01;35 *.xpm=01;35
-                   *.tif=01;35 *.png=01;35 *.mpg=01;35 *.avi=01;35 *.fli=01;35
-                   *.gl=01;35 *.dl=01;35
+                   no=0 fi=0 di=34;1 ln=36;1 pi=40;33 so=35;1 do=35;1 bd=40;33;1 cd=40;33;1
+                   or=40;31;9 ex=32;1
+                   *.tar=31;1  *.tgz=31;1  *.arj=31;1  *.taz=31;1  *.lzh=31;1
+                   *.zip=31;1    *.z=31;1    *.Z=31;1   *.gz=31;1  *.bz2=31;1
+                   *.deb=31;1  *.rpm=31;1  *.jpg=35;1  *.png=35;1  *.gif=35;1
+                   *.bmp=35;1  *.ppm=35;1  *.tga=35;1  *.xbm=35;1  *.xpm=35;1
+                   *.tif=35;1  *.png=35;1  *.mpg=35;1  *.avi=35;1  *.fli=35;1
+                    *.gl=35;1   *.dl=35;1
                  }];
 $use_colour = 'auto';
 $max_prec = 1;
@@ -57,27 +60,23 @@ my $block_size = $ENV{POSIXLY_CORRECT} ? 512 : 1024;
 
 sub format_date_heading($) {
     my ( $head ) = @_;
-    $head .= $full_time ? ' (UTC)' : '(Z)' if $use_utc;
-    my $w = ! $full_time ? 12 : 20 + ($time_precision || -1);
+    $head .= ' (UTC)' if $use_utc;
+    my $w = $time_precision == TIMEFMT_SHORT
+                ? 12
+                : 25 + $time_precision + !!$time_precision;
     return sprintf "%-*s ", $w, $head;
 }
 
 sub format_date($) {
-    my ($time) = @_;
-    my $wholetime = floor($time);
-    my $fmt = $full_time ? "%F,%T" :
-              $time > $^T - 15552000  # less than six months old?
-                  ? "%b %d %H:%M"
-                  : "%b %d  %Y";
-    my @t = $use_utc ?    gmtime $wholetime
-                     : localtime $wholetime;
-    my $r = strftime $fmt, @t;
-    if ($full_time && $time_precision) {
-        my $fractime = sprintf '%.*f', $time_precision, $time - $wholetime;
-        $fractime =~ s/^0//;
-        $r .= $fractime;
-    }
-    return $r;
+    my $time = shift;
+    return strftime( $time_precision == TIMEFMT_SHORT
+                        ? $time > $^T - 15552000
+                            ? "%b %d %H:%M" # newer than six months
+                            : "%b %d  %Y"   # older than six months
+                        : "%F %T%.${time_precision}N %z",
+                     $use_utc ? gmtime $time
+                              : localtime $time
+                     ).' ';
 }
 
 sub format_long_heading() {
@@ -97,18 +96,13 @@ sub format_long_heading() {
 
     $line .= sprintf "%8s ", "size" unless $hide_size;
 
-    $line .= format_date_heading "atime" if $show_atime;
-
-    $line .= ' ' if $show_atime && $show_mtime;
+    $line .= format_date_heading "ctime" if $show_ctime;
 
     $line .= format_date_heading "mtime" if $show_mtime;
 
-    $line .= '≶' if $show_atime || $show_mtime || $show_ctime;
-    $line .= ' ' if ($show_atime || $show_mtime) && $show_ctime;
+    $line .= ' ' if !$show_ctime != !$show_mtime;
 
-    $line .= format_date_heading "ctime" if $show_ctime;
-
-    $line .= ' ' if $show_ctime;
+    $line .= format_date_heading "atime" if $show_atime;
 
     $line .= "name";
 
@@ -172,8 +166,23 @@ sub human_format($$) {
 #   015:
 #   016:
 #   017:
-# LS_COLORS='no=00:fi=00:di=01;34:ln=01;36:pi=40;33:so=01;35:do=01;35:bd=40;33;01:cd=40;33;01:or=40;31;01:ex=01;32'
+
+# LS_COLORS='no=0:fi=0:di=1;34:ln=1;36:pi=40;33:so=1;35:do=1;35:bd=40;33;1:cd=40;33;1:or=40;31;1:ex=1;32'
 #
+# where:
+#  no=0         ⇒ 0        NOne (missing)
+#  fi=0         ⇒ S_IFREG  regular FIle
+#  di=34;1      ⇒ S_IFDIR  DIrectory
+#  ln=36;1      ⇒ S_IFLNK  symLiNk
+#  pi=40;33     ⇒ S_IFIFO  PIpe/fifo
+#  so=35;1      ⇒ S_IFSOCK SOcket
+#  do=35;1      ⇒ S_IFDOOR DOor (Solaris only)
+#  bd=40;33;1   ⇒ S_IFBLK  Block Device (hd)
+#  cd=40;33;1   ⇒ S_IFCHR  Char Device (tty)
+#
+#  or=40;31;1   ⇒ "ORphan" (dangling) symlink, encoded as 16
+#  ex=32;1      ⇒ EXecutable
+
 my @mchar = qw( ? p c ? d X b ? - ? l ? S ? ? ? );
 my @mkind = qw( 0 pi cd 0 di X bd 0 no 0 ln 0 so 0 0 0 or );
 my @xchar = qw( 0 0 0 0 / 0 0 0 0 0 @ 0 = 0 0 0 );
@@ -194,27 +203,6 @@ sub file_match($$) {
     $shell_pattern =~ s/\*/.*/go;
     $shell_pattern =~ s/\?/./go;
     return $name =~ $shell_pattern;
-}
-
-{
-package DecoratedString;
-sub new {
-    my @v = @_;
-    $v[0] //= '';
-    $v[1] //= do {
-            my $t = $_[0];
-            $t =~ s/(?:\e\[\|\x9b)[ -?]*[@-~]|[\x00-\x1f\x7f]|\p{Block: Combining_Diacritical_Marks}//g;
-            length $t;
-        };
-    $v[0] =~ tr([\x00-\x20\x7f])
-               ([\x{2400}-\x{2421}]);
-    #   0x02400: ␀␁␂␃␄␅␆␇␈␉␊␋␌␍␎␏
-    #   0x02410: ␐␑␒␓␔␕␖␗␘␙␚␛␜␝␞␟
-    #   0x02420: ␠␡␢␣␤␥␦
-    return bless \@v;
-}
-use overload '""' => sub { return $_[0]->[0] };
-sub display_width { return $_[0]->[1] //= length $_[0]->[0] }
 }
 
 {
@@ -247,7 +235,8 @@ sub colourize($$) {
         }
         $cx = $colour_kinds->{no};
     }
-    return "\033[${cx}m$name\033[0m" if $cx;
+    $name = "\033[${cx}m$name\033[0m" if $cx;
+    $name;
 }
 }
 
@@ -302,7 +291,7 @@ sub format_long($) {
     my $ref = $_[0];
     my $name = $ref->{name};
     my $file = $ref->{file} ||= $name;
-    my $stat = $ref->{stat} ||= [ $dereference ? stat $file : lstat $file ];
+    my $stat = $ref->{stat} ||= fstatat undef, $file, $dereference ? undef : AT_SYMLINK_NOFOLLOW;
 
     @$stat or do {
         warn "Couldn't stat $file: $!\n";
@@ -345,20 +334,26 @@ sub format_long($) {
     $line .= human_format $size, 8
         unless $hide_size;
 
-    if ( $show_atime || $show_mtime || $show_ctime ) {
-        $line .= format_date($atime) if $show_atime;
+    if ( $show_ctime || $show_mtime || $show_atime ) {
+        if ($show_ctime) {
+            $line .= format_date $ctime;
+            if ($show_mtime) {
+                # Show both
+                $line .= format_date $mtime;
+            } else {
+                $line =~ s/ $//;
+                $line .= $ctime <= $mtime ? '  ' : '> ';
+            }
+        }
+        elsif ($show_mtime) {
+            $line .= format_date $mtime;
+            $line =~ s/ $//;
+            $line .= $ctime <= $mtime ? '  ' : '< ';
+        }
 
-        $line .= ' ' if $show_atime && $show_mtime;
+        $line =~ s/ ([<>] )$/$1/;
 
-        $line .= format_date($mtime) if $show_mtime;
-
-        $line .= $mtime >= $ctime ? ' ' : '<';
-
-        $line .= ' ' if ($show_atime || $show_mtime) && $show_ctime;
-
-        $line .= format_date($ctime) if $show_ctime;
-
-        $line .= ' ';
+        $line .= format_date $atime if $show_atime;
     }
 
     my $link_ptr = "";
@@ -409,7 +404,7 @@ sub format_short($) {
     my $length = length $line;
 
     if ( $with_flag || $show_blocks || $show_inum || $use_colour ) {
-        $stat = $ref->{stat} ||= [ $dereference ? stat $file : lstat $file ];
+        $stat = $ref->{stat} ||= fstatat undef, $file, $dereference ? undef : AT_SYMLINK_NOFOLLOW;
 
         my ( $dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,
             $atime,$mtime,$ctime,$blksize,$blocks ) = @$stat;
@@ -599,6 +594,51 @@ sub set_show_all($$) {
     $long_mode = 1;
 }
 
+sub set_time_res {
+    my $res = pop @_;
+
+    if (! defined $res) {
+        $time_precision = TIMEFMT_SHORT;
+        return;
+    }
+
+    $res = TIMERES_NANOSECOND if $res eq '';  # different from literal '0'
+
+    # Accepts number of digits
+    if ( $res =~ /^\d+$/ && $res <= 9 ) { $time_precision = $res; return }
+
+    # Accepts decimal fraction indicating precision
+    if ( $res =~ /^0\.\d+$/ ) { $time_precision = -floor(log10($res)); return }
+
+    use feature 'state';
+
+    state $resmap = {
+
+        'brief'         => TIMEFMT_SHORT,       'short' => TIMEFMT_SHORT,
+        'full'          => TIMERES_NANOSECOND,
+
+        'none'          => TIMERES_SECOND,      'no'    => TIMERES_SECOND,
+        ''              => TIMERES_SECOND,      '-'     => TIMERES_SECOND,
+
+        'seconds'       => TIMERES_SECOND,      's'     => TIMERES_SECOND,
+        'deciseconds'   => TIMERES_DECISECOND,  'ds'    => TIMERES_DECISECOND,
+        'centiseconds'  => TIMERES_CENTISECOND, 'cs'    => TIMERES_CENTISECOND,
+        'milliseconds'  => TIMERES_MILLISECOND, 'ms'    => TIMERES_MILLISECOND,
+        'microseconds'  => TIMERES_MICROSECOND, 'us'    => TIMERES_MICROSECOND,
+                                                'µs'    => TIMERES_MICROSECOND,
+                                                'μs'    => TIMERES_MICROSECOND,
+        'nanoseconds'   => TIMERES_NANOSECOND,  'ns'    => TIMERES_NANOSECOND,
+#       'picoseconds'   => TIMERES_PICOSECOND,  'ps'    => TIMERES_PICOSECOND,
+
+    };
+
+    for ( $res, $res =~ s/s(e(c(o(nd?)?)?s?)?)?$/seconds/r, $res.'s' ) {
+        $time_precision = $resmap->{$_} // next;
+        return
+    }
+    die "Invalid time resolution $res\n";
+}
+
 sub N($) { my $r = \$_[0]; $$r && ref $$r eq 'CODE' ? sub { $_[-1] = !$_[-1]; goto &$$r } : sub { $$r = !$_[-1] } }
 sub S($$) { my $r = \$_[0]; my $v = $_[1]; sub { $$r = $v } }
 Getopt::Long::config(qw( no_ignore_case bundling require_order ));
@@ -624,29 +664,27 @@ GetOptions
     'd'             => \$dont_expand,
     'e|trace'       => \$trace_symlink_paths,
     'find'          => \$find_mode,
-    'full-time!'    => \$full_time,
-    'g'             => \$hide_owner,
+    'full-time|time:s' => \&set_time_res,
+ 'no-full-time|short-time|brief-time' => S($time_precision, -1),
     'heading!'      => \$show_heading,
     'hide-all!'     => N \&set_show_all,
     'hide-blocks!'  => N$show_blocks,
     'hide-date!'    => \$hide_time,
-    'hide-group!'   => \$hide_group,
+    'o|hide-group!' => \$hide_group,
     'hide-inode!'   => N$show_inum,
     'hide-mode!'    => \$hide_mode,
     'hide-num-links!' => \$hide_nlinks,
-    'hide-owner!'   => \$hide_owner,
+    'g|hide-owner!' => \$hide_owner,
     'hide-size!'    => \$hide_size,
     'hide-time!'    => \$hide_time,
-    'h|human-readable' => sub { $human_readable = 1024 },
+    'h|human-readable' => S($human_readable, 1024),
     'i|show-inode'  => \$show_inum,
     'l|long-mode'   => \$long_mode,
     'localtime!'    => N$use_utc,
     'max-precision=i' => \&max_prec,
     'n'             => \$show_numeric,
-    'o'             => \$hide_group,
     'q'             => \$show_qmark,
     'r'             => \$reverse,
-    'short-time!'   => N$full_time,
     'show-all!'     => \&set_show_all,
     'show-atime!'   => \$show_atime,
     'show-context|context!' => \$show_selinux_security_context,
@@ -700,7 +738,8 @@ Options to control sorting
 Options to control how information is formatted
     --short-time        display time(s) as month, day, and either time-of-day
                         (if within the last 180 days) or year (otherwise)
-    --full-time         display time(s) as year, month, day, hour, minute & second
+    --full-time[=PREC]  display time(s) as year, month, day, hour, minute & second
+                        display fractional seconds to PREC-digit precision
     --localtime         display time(s) relative to current locale (\$TZ)
     --utc               display time(s) relative to GMT
 
@@ -752,8 +791,7 @@ $use_colour = {qw{
                     y 1 ye 1 yes 1
                }}->{$use_colour || 'never'};
 
-$use_colour //= -t STDOUT;
-$use_utf8 //= $ENV{LANG} =~ /\.UTF-?8$/i;
+$use_colour = -t STDOUT if ! defined $use_colour;
 
 #
 # Convert short options to equivalent long option bundles
@@ -767,7 +805,7 @@ $use_time  ||= 'mtime';
 
 if ( !$hide_time && !$show_mtime && !$show_ctime && !$show_atime ) {
     if ( $use_double_time || $use_triple_time ) {
-        $full_time = 1;
+        $time_precision //= TIMERES_NANOSECOND;
         $long_mode = 1;
         $show_atime = 1 if $use_triple_time;
         $show_ctime = 1;
@@ -781,6 +819,10 @@ if ( !$hide_time && !$show_mtime && !$show_ctime && !$show_atime ) {
         $show_mtime = 1;
     }
 }
+
+$time_precision //= -1;
+$time_precision >= -1 && $time_precision <= TIMERES_NANOSECOND
+    or die "Time precision $time_precision not supported\n";
 
 #
 # Options '-c' and '-u' change '-t' from meaning "sort by mtime" into "sort by
@@ -809,7 +851,7 @@ if ( ! @ARGV && ! $dont_expand && ! $recurse ) {
             my (@F, @D);
             for ( @_ ) {
                 $_->{file} ||= $_->{name};
-                my @S = lstat $_->{file};
+                my @S = fstatat undef, $_->{file}, AT_SYMLINK_NOFOLLOW;
                 @S or do { warn "$_->{file}: $!\n"; ++$errs; next };
                 $_->{stat} = \@S;
                 if ( S_ISDIR($S[2]) && $lim ) {
