@@ -39,6 +39,7 @@ my (    $all, $almost_all,
         $trace_symlink_paths,
         $dereference,
     );
+my $debug_colourizer = 0;
 my $link_loop_limit = 32;
 my $time_precision = undef;
 
@@ -212,9 +213,10 @@ my ($colour_match_glob,   $colour_match_glob_re,
     $colour_match_prefix, $colour_match_prefix_re);
 sub colourize($$) {
     my ( $name, $mode ) = @_;
-    if ( ! $colour_kinds && ! $colour_match_glob
-                         && ! $colour_match_prefix
-                         && ! $colour_match_suffix ) {
+    if ( $colour_map ) {
+        # Translate C<$colour_map> string to 'kind' and 'regex' and 'glob'
+        # maps, and then remove the C<$colour_map> string so that this only
+        # happens once.
         for my $c ( @$colour_map ) {
             my ( $p, $x ) = split /=/, $c, 2;
             if ( $p =~ m{ ^\*$
@@ -240,6 +242,7 @@ sub colourize($$) {
                 $colour_kinds->{$p} = $x;
             }
         }
+        undef $colour_map;  # only create map once or if changed
         for my $cx ( [ \$colour_match_suffix, \$colour_match_suffix_re, '^', '' ],
                      [ \$colour_match_prefix, \$colour_match_prefix_re, '', '$' ] ) {
             my ($mr, $rr, $s, $e) = @$cx;
@@ -267,34 +270,35 @@ sub colourize($$) {
         }
     }
 
-    printf STDERR "Match Glob=%s\n", $colour_match_glob_re;
+    printf STDERR "Match Glob=%s\n", $colour_match_glob_re // '(undef)' if $debug_colourizer;
 
     my $cx = "";
     MATCH: {
         if ( $colour_match_suffix_re && $name =~ $colour_match_suffix_re ) {
             $cx = $colour_match_suffix->{$&};
-            printf STDERR "Colourizing %s -> suffix %s -> %s\n", $name, $&, $cx;
+            printf STDERR "Colourizing %s -> suffix %s -> %s\n", $name, $&, $cx if $debug_colourizer;
             last MATCH;
         }
         if ( $colour_match_prefix_re && $name =~ $colour_match_prefix_re ) {
             $cx = $colour_match_prefix->{$&};
-            printf STDERR "Colourizing %s -> prefix %s -> %s\n", $name, $&, $cx;
+            printf STDERR "Colourizing %s -> prefix %s -> %s\n", $name, $&, $cx if $debug_colourizer;
             last MATCH;
         }
         if ($colour_match_glob_re && $name =~ $$colour_match_glob_re) {
             for my $c ( keys %$colour_match_glob ) {
                 if ( file_match $name, $c ) {
                     $cx = $colour_match_glob->{$c};
-                    printf STDERR "Colourizing %s -> glob %s -> %s\n", $name, $&, $cx;
+                    printf STDERR "Colourizing %s -> glob %s -> %s\n", $name, $&, $cx if $debug_colourizer;
                     last MATCH;
                 }
             }
-            printf STDERR "Colourizing %s -> glob %s -> %s\n", $name, $&, $cx;
+            printf STDERR "Colourizing %s -> glob %s -> %s\n", $name, $&, $cx if $debug_colourizer;
         }
         $mode //= 16 << 12;
         if ( my $cxx = $mkind[ $mode >> 12 || 16 ] ) {
             $cx = $colour_kinds->{$cxx};
-            printf STDERR "Colourizing %s -> mkind %s -> %s\n", $name, $cxx, $cx;
+            printf STDERR "Colourizing %s -> mkind %s -> %s\n", $name, $cxx, $cx // '(undef)' if $debug_colourizer;
+            $cx //= '';
             last MATCH;
         }
         $cx = $colour_kinds->{no};
@@ -726,6 +730,7 @@ GetOptions
     'colour|color:s'=> \$use_colour,
     'c|use-ctime'   => S($use_time,'ctime'),
     'd'             => \$dont_expand,
+    'debug!'        => \$debug_colourizer,
     'e|trace'       => \$trace_symlink_paths,
     'find'          => \$find_mode,
     'full-time|time:s' => \&set_time_res,
