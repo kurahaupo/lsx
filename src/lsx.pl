@@ -10,7 +10,7 @@ use Getopt::Long;
 use Fcntl ':mode';
 
 use lib $ENV{HOME}.'/lib/perl';
-use Linux::Syscalls 'lstat', ':o_';
+use Linux::Syscalls 'lstat', ':O_';
 
 my (    $all, $almost_all,
         $long_mode, $hide_owner, $hide_group,
