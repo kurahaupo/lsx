@@ -5,9 +5,9 @@ use warnings;
 use strict;
 
 use Carp 'croak';
-use POSIX 'strftime', 'S_ISDIR', 'floor', 'log10';
-use Getopt::Long;
 use Fcntl ':mode';
+use Getopt::Long;
+use POSIX 'strftime', 'S_ISDIR', 'floor', 'log10';
 
 use FindBin qw(                  $RealBin  $Bin );
 use lib map { "$_/../lib/perl" } $RealBin, $Bin, $ENV{HOME};
