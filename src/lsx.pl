@@ -9,7 +9,8 @@ use POSIX 'strftime', 'S_ISDIR', 'floor', 'log10';
 use Getopt::Long;
 use Fcntl ':mode';
 
-use lib $ENV{HOME}.'/lib/perl';
+use FindBin qw(                  $RealBin  $Bin );
+use lib map { "$_/../lib/perl" } $RealBin, $Bin, $ENV{HOME};
 
 use Time::Nanosecond 'strftime', 'localtime', 'gmtime';
 use Linux::Syscalls 'fstatat', ':AT_', ':O_', ':timeres_';
