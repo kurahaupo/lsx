@@ -7,13 +7,24 @@ use strict;
 use Carp 'croak';
 use Fcntl ':mode';
 use Getopt::Long;
-use POSIX 'strftime', 'S_ISDIR', 'floor', 'log10';
+use POSIX qw(
+                S_ISDIR
+                S_ISREG
+                floor
+                log10
+                strftime
+            );
 
 use FindBin qw(                  $RealBin  $Bin );
 use lib map { "$_/../lib/perl" } $RealBin, $Bin, $ENV{HOME};
 
 use Time::Nanosecond 'strftime', 'localtime', 'gmtime';
-use Linux::Syscalls 'fstatat', ':AT_', ':O_', ':timeres_';
+use Linux::Syscalls qw(
+                :AT_
+                :O_
+                :timeres_
+                fstatat
+            );
 
 use constant { TIMEFMT_SHORT => -1 };
 
