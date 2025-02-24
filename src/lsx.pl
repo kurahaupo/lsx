@@ -5,7 +5,7 @@ use warnings;
 use strict;
 
 use Carp 'croak';
-use POSIX 'strftime', 'S_ISDIR';
+use POSIX 'strftime', 'S_ISDIR', 'floor';
 use Getopt::Long;
 use Fcntl ':mode';
 
@@ -36,6 +36,8 @@ my (    $all, $almost_all,
         $dereference,
     );
 my $link_loop_limit = 32;
+my $time_precision = 9;
+my $use_utf8 = 1;   # always assume UTF-8 encoding in filenames (for counting columns)
 
 $colour_map ||= do { my $e = $ENV{LS_COLORS}; $e ? [ split /:/, $e ] : () }
              || [ qw{
@@ -55,21 +57,27 @@ my $block_size = $ENV{POSIXLY_CORRECT} ? 512 : 1024;
 
 sub format_date_heading($) {
     my ( $head ) = @_;
-    $head .= ' (UTC)' if $use_utc;
-    return sprintf $full_time ? "%-19s " : "%-12s ", $head;
+    $head .= $full_time ? ' (UTC)' : '(Z)' if $use_utc;
+    my $w = ! $full_time ? 12 : 20 + ($time_precision || -1);
+    return sprintf "%-*s ", $w, $head;
 }
 
 sub format_date($) {
-    my $time = shift;
-    return strftime( +(
-                        $full_time ? "%Y-%m-%d,%H:%M:%S " :
-                        $time > $^T - 15552000  # less than six months old?
-                            ? "%b %d %H:%M "
-                            : "%b %d  %Y "
-                       ),
-                       $use_utc ? gmtime $time
-                                : localtime $time
-                     )
+    my ($time) = @_;
+    my $wholetime = floor($time);
+    my $fmt = $full_time ? "%F,%T" :
+              $time > $^T - 15552000  # less than six months old?
+                  ? "%b %d %H:%M"
+                  : "%b %d  %Y";
+    my @t = $use_utc ?    gmtime $wholetime
+                     : localtime $wholetime;
+    my $r = strftime $fmt, @t;
+    if ($full_time && $time_precision) {
+        my $fractime = sprintf '%.*f', $time_precision, $time - $wholetime;
+        $fractime =~ s/^0//;
+        $r .= $fractime;
+    }
+    return $r;
 }
 
 sub format_long_heading() {
@@ -89,13 +97,18 @@ sub format_long_heading() {
 
     $line .= sprintf "%8s ", "size" unless $hide_size;
 
-    #$line .= " " if $show_ctime || $show_mtime || $show_atime;
+    $line .= format_date_heading "atime" if $show_atime;
 
-    $line .= format_date_heading "ctime" if $show_ctime;
+    $line .= ' ' if $show_atime && $show_mtime;
 
     $line .= format_date_heading "mtime" if $show_mtime;
 
-    $line .= format_date_heading "atime" if $show_atime;
+    $line .= '≶' if $show_atime || $show_mtime || $show_ctime;
+    $line .= ' ' if ($show_atime || $show_mtime) && $show_ctime;
+
+    $line .= format_date_heading "ctime" if $show_ctime;
+
+    $line .= ' ' if $show_ctime;
 
     $line .= "name";
 
@@ -184,6 +197,27 @@ sub file_match($$) {
 }
 
 {
+package DecoratedString;
+sub new {
+    my @v = @_;
+    $v[0] //= '';
+    $v[1] //= do {
+            my $t = $_[0];
+            $t =~ s/(?:\e\[\|\x9b)[ -?]*[@-~]|[\x00-\x1f\x7f]|\p{Block: Combining_Diacritical_Marks}//g;
+            length $t;
+        };
+    $v[0] =~ tr([\x00-\x20\x7f])
+               ([\x{2400}-\x{2421}]);
+    #   0x02400: ␀␁␂␃␄␅␆␇␈␉␊␋␌␍␎␏
+    #   0x02410: ␐␑␒␓␔␕␖␗␘␙␚␛␜␝␞␟
+    #   0x02420: ␠␡␢␣␤␥␦
+    return bless \@v;
+}
+use overload '""' => sub { return $_[0]->[0] };
+sub display_width { return $_[0]->[1] //= length $_[0]->[0] }
+}
+
+{
 my $colour_kinds;
 my $colour_match;
 sub colourize($$) {
@@ -213,8 +247,7 @@ sub colourize($$) {
         }
         $cx = $colour_kinds->{no};
     }
-    $name = "\033[${cx}m$name\033[0m" if $cx;
-    $name;
+    return "\033[${cx}m$name\033[0m" if $cx;
 }
 }
 
@@ -312,14 +345,20 @@ sub format_long($) {
     $line .= human_format $size, 8
         unless $hide_size;
 
-    if ( $show_ctime || $show_mtime || $show_atime ) {
-        $mtime >= $ctime or $line =~ s/ ?$/*/o;
+    if ( $show_atime || $show_mtime || $show_ctime ) {
+        $line .= format_date($atime) if $show_atime;
 
-        $line .= format_date $ctime if $show_ctime;
+        $line .= ' ' if $show_atime && $show_mtime;
 
-        $line .= format_date $mtime if $show_mtime;
+        $line .= format_date($mtime) if $show_mtime;
 
-        $line .= format_date $atime if $show_atime;
+        $line .= $mtime >= $ctime ? ' ' : '<';
+
+        $line .= ' ' if ($show_atime || $show_mtime) && $show_ctime;
+
+        $line .= format_date($ctime) if $show_ctime;
+
+        $line .= ' ';
     }
 
     my $link_ptr = "";
@@ -713,7 +752,8 @@ $use_colour = {qw{
                     y 1 ye 1 yes 1
                }}->{$use_colour || 'never'};
 
-$use_colour = -t STDOUT if ! defined $use_colour;
+$use_colour //= -t STDOUT;
+$use_utf8 //= $ENV{LANG} =~ /\.UTF-?8$/i;
 
 #
 # Convert short options to equivalent long option bundles
