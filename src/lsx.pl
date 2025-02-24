@@ -59,6 +59,7 @@ $colour_map ||= do { my $e = $ENV{LS_COLORS}; $e ? [ split /:/, $e ] : () }
              || [ qw{
                    no=0 fi=0 di=34;1 ln=36;1 pi=40;33 so=35;1 do=35;1 bd=40;33;1 cd=40;33;1
                    or=40;31;9 ex=32;1
+                   ud=35;1
                    hl=7
                    *.tar=31;1  *.tgz=31;1  *.arj=31;1  *.taz=31;1  *.lzh=31;1
                    *.zip=31;1    *.z=31;1    *.Z=31;1   *.gz=31;1  *.bz2=31;1
@@ -196,6 +197,7 @@ sub human_format($$) {
 #
 #  or=40;31;1   ⇒ "ORphan" (dangling) symlink, encoded as 16
 #  ex=32;1      ⇒ EXecutable
+#  ud=35;1      # Unscannable Directory
 #
 #  hl=7         # Heading Line (inverse video)
 
@@ -329,6 +331,12 @@ sub colourize_name($$) {
                 }
             }
             printf STDERR "Colourizing %s -> glob %s -> %s\n", $name, $&, $cx if $debug_colourizer;
+        }
+        if ( S_ISDIR($mode) && !( $mode & 0111 ) ) {
+            # Unscannable directory
+            $cx = $colour_kinds->{ud} and
+            last MATCH;
+            # Fall back to "normal" directory
         }
         if ( my $cxx = $mkind[ $mode >> 12 || 16 ] ) {
             $cx = $colour_kinds->{$cxx};
