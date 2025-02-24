@@ -330,7 +330,6 @@ sub colourize_name($$) {
             }
             printf STDERR "Colourizing %s -> glob %s -> %s\n", $name, $&, $cx if $debug_colourizer;
         }
-        $mode //= 16 << 12;
         if ( my $cxx = $mkind[ $mode >> 12 || 16 ] ) {
             $cx = $colour_kinds->{$cxx};
             printf STDERR "Colourizing %s -> mkind %s -> %s\n", $name, $cxx, $cx // '(undef)' if $debug_colourizer;
