@@ -339,7 +339,7 @@ sub colourize_name($$) {
         $cx = $colour_kinds->{no};
     }
     $name = "\033[${cx}m$name\033[0m" if $cx;
-    $name;
+    return $name;
 }
 }
 
@@ -600,10 +600,8 @@ sub ls_list(@) {
             next WIDTH unless $need_width <= $tc;
 
             if ( $heading ) {
-                print( ( map {
-                                ( $heading, " " x ( $col_widths[$_] + 2 - $heading_width) )
-                            } 0 .. $cols - 2 ),
-                       $heading, "\n" );
+                my $h2 = $heading . (' ' x ( $col_widths[$_] + 2 - $heading_width));
+                print $h2 x ($cols - 1), $heading, "\n";
             }
 
             for my $r ( 0 .. $rows-1 ) {
