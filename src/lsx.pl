@@ -297,7 +297,7 @@ sub colourize_heading($) {
     my ( $line ) = @_;
     return $line unless $use_colour;
     colour_init;
-    my $cx = $colour_kinds->{hl};
+    my $cx = $colour_kinds->{hl} // '7';	# Use inverse if unspecified
 
     printf STDERR "Colourizing header cx=[%s] [%s]\n", $cx || '(none)', $line if $debug_colourizer;
 
