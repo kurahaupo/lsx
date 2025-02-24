@@ -336,6 +336,11 @@ sub colourize_name($$) {
             $cx //= '';
             last MATCH;
         }
+        if ( S_ISREG($mode) && $mode & 0111 ) {
+            # Executable
+            $cx = $colour_kinds->{ex};
+            last MATCH;
+        }
         $cx = $colour_kinds->{no};
     }
     $name = "\033[${cx}m$name\033[0m" if $cx;
