@@ -59,6 +59,7 @@ $colour_map ||= do { my $e = $ENV{LS_COLORS}; $e ? [ split /:/, $e ] : () }
              || [ qw{
                    no=0 fi=0 di=34;1 ln=36;1 pi=40;33 so=35;1 do=35;1 bd=40;33;1 cd=40;33;1
                    or=40;31;9 ex=32;1
+                   hl=7
                    *.tar=31;1  *.tgz=31;1  *.arj=31;1  *.taz=31;1  *.lzh=31;1
                    *.zip=31;1    *.z=31;1    *.Z=31;1   *.gz=31;1  *.bz2=31;1
                    *.deb=31;1  *.rpm=31;1  *.jpg=35;1  *.png=35;1  *.gif=35;1
@@ -195,6 +196,8 @@ sub human_format($$) {
 #
 #  or=40;31;1   ⇒ "ORphan" (dangling) symlink, encoded as 16
 #  ex=32;1      ⇒ EXecutable
+#
+#  hl=7         # Heading Line (inverse video)
 
 my @mchar = qw( ? p c ? d X b ? - ? l ? S ? ? ? );
 my @mkind = qw( 0 pi cd 0 di X bd 0 no 0 ln 0 so 0 0 0 or );
@@ -223,67 +226,88 @@ my $colour_kinds;
 my ($colour_match_glob,   $colour_match_glob_re,
     $colour_match_suffix, $colour_match_suffix_re,
     $colour_match_prefix, $colour_match_prefix_re);
-sub colourize($$) {
-    my ( $name, $mode ) = @_;
-    if ( $colour_map ) {
-        # Translate C<$colour_map> string to 'kind' and 'regex' and 'glob'
-        # maps, and then remove the C<$colour_map> string so that this only
-        # happens once.
-        for my $c ( @$colour_map ) {
-            my ( $p, $x ) = split /=/, $c, 2;
-            if ( $p =~ m{ ^\*$
-                        | .\*.
-                        | \?
-                        }x ) {
-                # If pattern consists *entirely* of '*', or has '?' anywhere,
-                # or has '*' that's neither initial nor final, then treat this
-                # as a full glob, which means we need to scan it to find the
-                # match.
-                $colour_match_glob->{$p} = $x;
-            }
-            elsif ( $p =~ /^\*/ ) {
-                # If it starts with '*' (and contains no other wildcard chars)
-                # then treat as a suffix match
-                $colour_match_suffix->{$'} = $x;
-            }
-            elsif ( $p =~ /\*$/ ) {
-                # If it ends with '*' (and contains no other wildcard chars)
-                # then treat as a prefix match
-                $colour_match_prefix->{$`} = $x;
-            } else {
-                $colour_kinds->{$p} = $x;
-            }
+
+sub colour_init() {
+    $colour_map || return;
+
+    # Translate C<$colour_map> string to 'kind' and 'regex' and 'glob'
+    # maps, and then remove the C<$colour_map> string so that this only
+    # happens once.
+    for my $c ( @$colour_map ) {
+        my ( $p, $x ) = split /=/, $c, 2;
+        if ( $p =~ m{ ^\*\*\w+$ }x ) {
+            # Allow extensions to be encoded with a leading '**' to avoid
+            # complaints from 'normal' ls.
+            $colour_kinds->{substr $p, 2} = $x;
         }
-        undef $colour_map;  # only create map once or if changed
-        for my $cx ( [ \$colour_match_suffix, \$colour_match_suffix_re, '^', '' ],
-                     [ \$colour_match_prefix, \$colour_match_prefix_re, '', '$' ] ) {
-            my ($mr, $rr, $s, $e) = @$cx;
-            $$mr || next;
-            my @k = sort { length($b) <=> length($a) } keys %$$mr;
-            my $q = join '|', map { quotemeta $_ } @k;
-            $q = "$s($q)$e";
-            $q = qr/$q/;
-            $$rr = $q;
+        elsif ( $p =~ m{ ^\*$
+                       | .\*.
+                       | \?
+                       }x ) {
+            # If pattern consists *entirely* of '*', or has '?' anywhere,
+            # or has '*' that's neither initial nor final, then treat this
+            # as a full glob, which means we need to scan it to find the
+            # match.
+            $colour_match_glob->{$p} = $x;
         }
-        if ($colour_match_glob) {
-            my @k = sort { length($b) <=> length($a) } keys %$colour_match_glob;
-            my $q = join '|',
-                        map {
-                            s{
-                                [*?\\.^\[\]\$]
-                            }{
-                                $& eq '*' ? '.*' :
-                                $& eq '?' ? '.'  :
-                                '\\'.$&
-                            }egrx
-                        } @k;
-            $q = "^($q)\$";
-            $colour_match_glob_re = qr/$q/;
+        elsif ( $p =~ /^\*/ ) {
+            # If it starts with '*' (and contains no other wildcard chars)
+            # then treat as a suffix match
+            $colour_match_suffix->{$'} = $x;
+        }
+        elsif ( $p =~ /\*$/ ) {
+            # If it ends with '*' (and contains no other wildcard chars)
+            # then treat as a prefix match
+            $colour_match_prefix->{$`} = $x;
+        } else {
+            $colour_kinds->{$p} = $x;
         }
     }
+    undef $colour_map;  # only create map once or if changed
+    for my $cx ( [ \$colour_match_suffix, \$colour_match_suffix_re, '^', '' ],
+                 [ \$colour_match_prefix, \$colour_match_prefix_re, '', '$' ] ) {
+        my ($mr, $rr, $s, $e) = @$cx;
+        $$mr || next;
+        my @k = sort { length($b) <=> length($a) } keys %$$mr;
+        my $q = join '|', map { quotemeta $_ } @k;
+        $q = "$s($q)$e";
+        $q = qr/$q/;
+        $$rr = $q;
+    }
+    if ($colour_match_glob) {
+        my @k = sort { length($b) <=> length($a) } keys %$colour_match_glob;
+        my $q = join '|',
+                    map {
+                        s{
+                            [*?\\.^\[\]\$]
+                        }{
+                            $& eq '*' ? '.*' :
+                            $& eq '?' ? '.'  :
+                            '\\'.$&
+                        }egrx
+                    } @k;
+        $q = "^($q)\$";
+        $colour_match_glob_re = qr/$q/;
+    }
+}
 
+sub colourize_heading($) {
+    my ( $line ) = @_;
+    return $line unless $use_colour;
+    colour_init;
+    my $cx = $colour_kinds->{hl};
+
+    printf STDERR "Colourizing header cx=[%s] [%s]\n", $cx || '(none)', $line if $debug_colourizer;
+
+    $line = "\033[${cx}m$line\033[0m" if $cx;
+    return $line;
+}
+
+sub colourize_name($$) {
+    my ( $name, $mode ) = @_;
+    return $name unless $use_colour;
+    colour_init;
     printf STDERR "Match Glob=%s\n", $colour_match_glob_re // '(undef)' if $debug_colourizer;
-
     my $cx = "";
     MATCH: {
         if ( $colour_match_suffix_re && $name =~ $colour_match_suffix_re ) {
@@ -452,7 +476,7 @@ sub format_long($) {
 
     my $length = length($line) + length($name) + length($link_ptr) + length($mode_flag);
 
-    $name = colourize $name, $mode if $use_colour;
+    $name = colourize_name $name, $mode if $use_colour;
 
     $line .= $name;
     $line .= $link_ptr;
@@ -498,7 +522,7 @@ sub format_short($) {
 
         $end .= mode_flag $mode if $with_flag;
 
-        $line = colourize $line, $mode if $use_colour;
+        $line = colourize_name $line, $mode if $use_colour;
 
         $line = "$start$line$end";
         $length += length($start)+length($end);
@@ -509,9 +533,8 @@ sub format_short($) {
 
 sub get_dir($) {
     my $dir = $_[0];
-    local *DIR;
-    opendir DIR, $dir or die "Can't read $_[0]; $!\n";
-    return readdir DIR;
+    opendir my $dh, $dir or die "Can't read $_[0]; $!\n";
+    return readdir $dh;
 }
 
 sub load_dir($) {
@@ -560,6 +583,8 @@ sub ls_list(@) {
 
         my $heading_width = length($heading||"");
 
+        $heading = colourize_heading $heading if $use_colour;
+
         my $mean_width = ( sum map { max $heading_width, $_->{fmt_width} } @l )
                          / scalar(@l)
                          || 1;
@@ -602,6 +627,8 @@ sub ls_list(@) {
     # single-column mode.
 
     if ( $heading ) {
+        $heading = colourize_heading $heading if $use_colour;
+
         print $heading, "\n";
     }
     for (@l) {
