@@ -28,9 +28,17 @@ use Linux::Syscalls qw(
 
 use constant { TIMEFMT_SHORT => -1 };
 
+use constant {
+    INDICATOR_NONE      => 0,
+    INDICATOR_SLASH     => 1,   # -p; only add
+    INDICATOR_FILE_TYPE => 2,   # --file-type
+    INDICATOR_CLASSIFY  => 3,   # -C --classify; same as --file-type but also with ‘*’ for executable plain files
+};
+
 my (    $all, $almost_all,
         $long_mode, $hide_owner, $hide_group,
-        $with_flag, $in_columns,
+        $indicator_style,
+        $in_columns,
         $use_colour, $colour_map,
         $sorter_needs_stat,
         $sort_by, $reverse,
@@ -121,7 +129,7 @@ sub format_long_heading() {
 
     $line .= "name";
 
-    $line .= "#" if $with_flag;
+    $line .= "#" if $indicator_style;
 
     return $line;
 }
@@ -207,12 +215,16 @@ my @xchar = qw( 0 0 0 0 / 0 0 0 0 0 @ 0 = 0 0 0 );
 my @zchar = qw( x t s ? s ? ? ? );
 my @Zchar = qw( - T l ? S ? ? ? );
 
-sub mode_flag($) {
-    my $mode = $_[0];
-    return ! defined $mode && "@?"
+sub indicator($) {
+    if (! $indicator_style) { return '' }
+    my ($mode) = $_[0];
+    if ($indicator_style == INDICATOR_SLASH) {
+        return S_ISDIR($mode) ? '/' : ''
+    }
+    return ! defined $mode && '?'
         || $xchar[$mode >> 12 & 15]
-        || $mode & 0111 && "*"
-        || "";
+        || $mode & 0111 && $indicator_style == INDICATOR_CLASSIFY && '*'
+        || '';
 }
 
 sub file_match($$) {
@@ -297,7 +309,7 @@ sub colourize_heading($) {
     my ( $line ) = @_;
     return $line unless $use_colour;
     colour_init;
-    my $cx = $colour_kinds->{hl} // '7';	# Use inverse if unspecified
+    my $cx = $colour_kinds->{hl} // '7;33';	# Use inverse if unspecified
 
     printf STDERR "Colourizing header cx=[%s] [%s]\n", $cx || '(none)', $line if $debug_colourizer;
 
@@ -482,17 +494,17 @@ sub format_long($) {
         $link_ptr = " -> $link";
     }
 
-    my $mode_flag = "";
-    $mode_flag = mode_flag $mode if $with_flag;
+    my $indicator = "";
+    $indicator = indicator $mode if $indicator_style;
     $name = $file if $find_mode;
 
-    my $length = length($line) + length($name) + length($link_ptr) + length($mode_flag);
+    my $length = length($line) + length($name) + length($link_ptr) + length($indicator);
 
     $name = colourize_name $name, $mode if $use_colour;
 
     $line .= $name;
     $line .= $link_ptr;
-    $line .= $mode_flag;
+    $line .= $indicator;
 
     return ( $line, $length );
 }
@@ -504,7 +516,7 @@ sub format_short_heading() {
 
     $line = sprintf "%8s %s", "inode", $line if $show_inum;
 
-    $line .= "#" if $with_flag;
+    $line .= '#' if $indicator_style;
 
     return $line;
 }
@@ -519,7 +531,7 @@ sub format_short($) {
     my $line = $name;
     my $length = length $line;
 
-    if ( $with_flag || $show_blocks || $show_inum || $use_colour ) {
+    if ( $indicator_style || $show_blocks || $show_inum || $use_colour ) {
         $stat = $ref->{stat} ||= fstatat undef, $file, $dereference ? undef : AT_SYMLINK_NOFOLLOW;
 
         my ( $dev,$ino,$mode,$nlink,$uid,$gid,$rdev,$size,
@@ -532,7 +544,7 @@ sub format_short($) {
 
         $start .= sprintf "%8d ", $ino if $show_inum;
 
-        $end .= mode_flag $mode if $with_flag;
+        $end .= indicator $mode if $indicator_style;
 
         $line = colourize_name $line, $mode if $use_colour;
 
@@ -756,6 +768,21 @@ sub set_time_res {
     die "Invalid time resolution $res\n";
 }
 
+{
+my %indicator_names = (
+    classify    => INDICATOR_CLASSIFY,  # -C --classify
+    file_type   => INDICATOR_FILE_TYPE, # --file-type
+    'file-type' => INDICATOR_FILE_TYPE, # --file-type
+    none        => INDICATOR_NONE,
+    slash       => INDICATOR_SLASH,
+    slash       => INDICATOR_SLASH,     # -p
+);
+sub indicator_n2i {
+    my $name = pop;
+    return $indicator_names{$name} // die "Invalid indicator type ‘$name’\n";
+}
+}
+
 sub N($) { my $r = \$_[0]; $$r && ref $$r eq 'CODE' ? sub { $_[-1] = !$_[-1]; goto &$$r } : sub { $$r = !$_[-1] } }
 sub S($$) { my $r = \$_[0]; my $v = $_[1]; sub { $$r = $v } }
 Getopt::Long::config(qw( no_ignore_case bundling require_order ));
@@ -766,7 +793,7 @@ GetOptions
     'A'             => \$almost_all,
     'C'             => \$in_columns,
     'E'             => \$show_xattr,
-    'F'             => \$with_flag,
+    'F|classify'    => S($indicator_style, INDICATOR_CLASSIFY),
     'H|si'          => S($human_readable, 1000),
     'L|dereference' => \$dereference,
     'R|recurse'     => \$recurse,
@@ -796,11 +823,15 @@ GetOptions
     'hide-size!'    => \$hide_size,
     'hide-time!'    => \$hide_time,
     'h|human-readable' => S($human_readable, 1024),
-    'i|show-inode'  => \$show_inum,
+    'i|inode|show-inode'  => \$show_inum,
+    'indicator-style=s' => \&indicator_n2i,
+ 'no-indicator'     => S($indicator_style, INDICATOR_NONE),
     'l|long-mode'   => \$long_mode,
     'localtime!'    => N$use_utc,
     'max-precision=i' => \&max_prec,
     'n'             => \$show_numeric,
+    'file-type'     => S($indicator_style, INDICATOR_FILE_TYPE),
+    'p'             => S($indicator_style, INDICATOR_SLASH),
     'q'             => \$show_qmark,
     'r'             => \$reverse,
     'show-all!'     => \&set_show_all,
