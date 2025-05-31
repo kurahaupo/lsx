@@ -594,7 +594,7 @@ sub ls_list(@) {
     $show_heading = 0 if $find_mode;  # Only print heading first time
     @l = grep { $_->{fmt} } @l;
     @l or return;
-    @l = sort { &$sort_by } @l if $sort_by;
+    @l = sort $sort_by @l if $sort_by;
     @l = reverse @l if $reverse;
     if ( $show_qmark ) { for (@l) { $_->{name} =~ s/[^ -~]/?/go } }
 
@@ -680,12 +680,12 @@ my %sorter_needs_stat = (
         atime => 1,
         ctime => 1,
         mtime => 1,
+        time  => 1,
         mode  => 1,
         perms => 1,
     );
 
 my ( $hide_time,
-     $sort_by_time,
      $time_display,
      $use_time,
      $use_double_time,
@@ -694,16 +694,12 @@ my ( $hide_time,
 
 sub set_sort_by($) {
     my $k = $_[-1];
-    if ($k eq 'none') {
-        $sort_by_time = 0;
+    if ($k eq 'none' || $k eq 'raw') {
         $sorter_needs_stat = 0;
         $sort_by = undef;
     } elsif ($k eq 'time') {
-        $sort_by_time = 1;
-        $sorter_needs_stat = 0;
-        $sort_by = undef;
+        $sort_by = $k;
     } else {
-        $sort_by_time = 0;
         $sorter_needs_stat = $sorter_needs_stat{$k};
         $sort_by = $sorter{$k} || die "No way to sort on '$k'\n";
     }
@@ -802,7 +798,8 @@ GetOptions
     'R|recurse'     => \$recurse,
     'S'             => sub { set_sort_by 'size' },
     'T'             => sub { print "Usage error: -T TABSIZE is unsupported, and '--trace' is now '-e'\n"; exit 64 },
-    'U|unsorted|no-sort-by' => sub { set_sort_by 'none' },
+    'U|unsorted|no-sort|no-sort-by|sort-by-none|sort-by-raw'
+                    => sub { set_sort_by 'none' },
     'Z'             => \$show_selinux_security_context,
     'a'             => \$all,
     'blocksize=i'   => \$block_size,
@@ -963,7 +960,7 @@ if ( !$hide_time && !$show_mtime && !$show_ctime && !$show_atime ) {
         $show_atime = 1 if $use_triple_time;
         $show_ctime = 1;
         $show_mtime = 1;
-        $sort_by = $sorter{ctime};
+        $sort_by = $sorter{ctime} if $sort_by eq 'time';
     } elsif ( $use_time eq 'ctime' ) {
         $show_ctime = 1;
     } elsif ( $use_time eq 'atime' ) {
@@ -982,8 +979,9 @@ $time_precision >= -1 && $time_precision <= TIMERES_NANOSECOND
 # ctime" and "sort by atime" respectively.
 #
 
-if ( $sort_by_time ) {
+if ( ! ref $sort_by && $sort_by eq 'time' ) {
     $sort_by = $sorter{$use_time};
+    $sorter_needs_stat = 1;
 }
 
 $recurse ||= $find_mode;
