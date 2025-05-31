@@ -810,8 +810,10 @@ GetOptions
     'e|trace'       => \$trace_symlink_paths,
     'find'          => \$find_mode,
     'full-time'     => S($time_precision, TIMERES_NANOSECOND),
-    'time-precision=s' => \&set_time_res,
- 'no-full-time|short-time|brief-time' => S($time_precision, -1),
+    'time-precision=s'
+                    => \&set_time_res,
+ 'no-full-time|short-time|brief-time'
+                    => S($time_precision, -1),
     'heading!'      => \$show_heading,
     'hide-all!'     => N \&set_show_all,
     'hide-blocks!'  => N$show_blocks,
@@ -819,17 +821,22 @@ GetOptions
     'o|hide-group!' => \$hide_group,
     'hide-inode!'   => N$show_inum,
     'hide-mode!'    => \$hide_mode,
-    'hide-num-links!' => \$hide_nlinks,
+    'hide-num-links!'
+                    => \$hide_nlinks,
     'g|hide-owner!' => \$hide_owner,
     'hide-size!'    => \$hide_size,
     'hide-time!'    => \$hide_time,
-    'h|human-readable' => S($human_readable, 1024),
-    'i|inode|show-inode'  => \$show_inum,
-    'indicator-style=s' => \&indicator_n2i,
+    'h|human-readable'
+                    => S($human_readable, 1024),
+    'i|inode|show-inode'
+                    => \$show_inum,
+    'indicator-style=s'
+                    => \&indicator_n2i,
  'no-indicator'     => S($indicator_style, INDICATOR_NONE),
     'l|long-mode'   => \$long_mode,
     'localtime!'    => N$use_utc,
-    'max-precision=i' => \&max_prec,
+    'max-precision=i'
+                    => \&max_prec,
     'n'             => \$show_numeric,
     'file-type'     => S($indicator_style, INDICATOR_FILE_TYPE),
     'p'             => S($indicator_style, INDICATOR_SLASH),
@@ -837,24 +844,27 @@ GetOptions
     'r'             => \$reverse,
     'show-all!'     => \&set_show_all,
     'show-atime!'   => \$show_atime,
-    'show-context|context!' => \$show_selinux_security_context,
+    'show-context|context!'
+                    => \$show_selinux_security_context,
     'show-ctime!'   => \$show_ctime,
     'show-date!'    => N$hide_time,
     'show-group!'   => N$hide_group,
     'show-mode!'    => N$hide_mode,
     'show-mtime!'   => \$show_mtime,
-    'show-num-links!' => N$hide_nlinks,
+    'show-num-links!'
+                    => N$hide_nlinks,
     'show-owner!'   => N$hide_owner,
     'show-size!'    => N$hide_size,
     'show-time!'    => N$hide_time,
     'show-xattr!'   => \$show_xattr,
-    'sort-by-time!' => sub { set_sort_by $_[-1] ? 'time' : 'none' },
+    'sort-by-time!' => sub { set_sort_by( $_[-1] ? 'time' : 'none' ) },
     'sort-by=s'     => \&set_sort_by,
     's|show-blocks' => \$show_blocks,
     't'             => sub { set_sort_by 'time' },
     'utc!'          => \$use_utc,
     'u|use-atime'   => S($use_time,'atime'),
-    (map { my $x = $_; "sort-by-$x" => sub { set_sort_by $x } } keys %sorter),
+    (map { my $x = $_;
+    "sort-by-$x"    => sub { set_sort_by $x } } keys %sorter),
    #'sort-by-name'  => sub { set_sort_by 'name' },
     'help'          => sub { print <<EOF; exit 0 } or die "Try \"lsx --help\" for more information.\n";
 
