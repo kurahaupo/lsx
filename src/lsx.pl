@@ -86,7 +86,8 @@ sub format_date_heading($) {
     $head .= ' (UTC)' if $use_utc;
     my $w = $time_precision == TIMEFMT_SHORT
                 ? 12
-                : 25 + $time_precision + !!$time_precision;
+                : 20 + $time_precision - !$time_precision + 6 * !$use_utc;
+    #                                    no decimal point   «␠±hhmm»
     return sprintf "%-*s ", $w, $head;
 }
 
@@ -96,7 +97,9 @@ sub format_date($) {
                         ? $time > $^T - 15552000
                             ? "%b %d %H:%M" # newer than six months
                             : "%b %d  %Y"   # older than six months
-                        : "%F %T%.${time_precision}N %z",
+                        : $use_utc
+                            ? "%F %T%.${time_precision}N"
+                            : "%F %T%.${time_precision}N %z",
                      $use_utc ? gmtime $time
                               : localtime $time
                      ).' ';
