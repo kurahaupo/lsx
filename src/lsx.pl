@@ -424,6 +424,7 @@ sub format_long($) {
     my $file = $ref->{file} ||= $name;
     my $stat = $ref->{stat} ||= fstatat undef, $file, $dereference ? undef : AT_SYMLINK_NOFOLLOW;
 
+    $stat &&
     @$stat or do {
         warn "Couldn't stat $file: $!\n";
         return
