@@ -609,9 +609,11 @@ sub ls_list(@) {
                 }
             || 80;
 
-        my $heading_width = length($heading||"");
-
-        $heading = colourize_heading $heading if $use_colour;
+        my $heading_width = 0;
+        if ($heading) {
+            $heading_width = length $heading;
+            $heading = colourize_heading $heading if $use_colour;
+        }
 
         my $mean_width = ( sum map { max $heading_width, $_->{fmt_width} } @l )
                          / scalar(@l)
@@ -649,8 +651,8 @@ sub ls_list(@) {
         }
     }
 
-    # If we either didn't ask for columns, or can't fit into columns, then use
-    # single-column mode.
+    # If we either didn't ask for columns, or if the output can't fit into
+    # columns, then use single-column mode.
 
     if ( $heading ) {
         $heading = colourize_heading $heading if $use_colour;
